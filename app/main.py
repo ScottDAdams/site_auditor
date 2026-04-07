@@ -17,6 +17,7 @@ from app.analyzer import (
     analyze_overlaps,
     compute_ai_readiness,
     detect_topic_overlap,
+    group_findings,
     is_valid_cluster,
 )
 from app.report import generate_report
@@ -115,8 +116,12 @@ def run_audit(sites: str = Form(...)):
 
     all_findings = findings + overlap_findings
 
+    grouped_issues = group_findings(all_findings)
+
     ai_readiness = compute_ai_readiness(pages)
-    report = generate_report(all_findings, pages, clusters, ai_readiness)
+    report = generate_report(
+        all_findings, grouped_issues, pages, clusters, ai_readiness
+    )
 
     STATE.update({
         "status": "done",

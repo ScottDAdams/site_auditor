@@ -264,3 +264,88 @@ def analyze_overlaps(overlaps):
         findings, key=lambda x: x["priority"] == "HIGH", reverse=True
     )
     return findings[:8]
+
+
+def group_findings(findings):
+    groups = {
+        "product_positioning": [],
+        "cross_market_duplication": [],
+        "informational_overlap": [],
+        "other": [],
+    }
+
+    for f in findings:
+        if f.get("type") != "topic_overlap":
+            continue
+
+        types = f.get("overlap_types") or []
+
+        if "product" in types:
+            groups["product_positioning"].append(f)
+        elif f.get("cross_market"):
+            groups["cross_market_duplication"].append(f)
+        elif "guide" in types:
+            groups["informational_overlap"].append(f)
+        else:
+            groups["other"].append(f)
+
+    grouped_issues = []
+
+    for key, items in groups.items():
+        if not items:
+            continue
+
+        if key == "product_positioning":
+            grouped_issues.append(
+                {
+                    "title": "Product Positioning Overlap",
+                    "priority": "HIGH",
+                    "summary": (
+                        "Multiple product pages overlap in positioning and may confuse "
+                        "users choosing between plans."
+                    ),
+                    "count": len(items),
+                    "examples": items[:2],
+                }
+            )
+
+        elif key == "cross_market_duplication":
+            grouped_issues.append(
+                {
+                    "title": "Cross-Market Content Duplication",
+                    "priority": "HIGH",
+                    "summary": (
+                        "Content between AU and NZ sites lacks differentiation and "
+                        "localization."
+                    ),
+                    "count": len(items),
+                    "examples": items[:2],
+                }
+            )
+
+        elif key == "informational_overlap":
+            grouped_issues.append(
+                {
+                    "title": "Informational Content Overlap",
+                    "priority": "HIGH",
+                    "summary": (
+                        "Multiple pages target similar informational intent, reducing "
+                        "SEO effectiveness."
+                    ),
+                    "count": len(items),
+                    "examples": items[:2],
+                }
+            )
+
+        else:
+            grouped_issues.append(
+                {
+                    "title": "General Content Overlap",
+                    "priority": "MEDIUM",
+                    "summary": "Some content may overlap and should be reviewed.",
+                    "count": len(items),
+                    "examples": items[:2],
+                }
+            )
+
+    return grouped_issues

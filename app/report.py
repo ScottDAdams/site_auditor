@@ -62,7 +62,28 @@ def _executive_insights_lines(findings):
     return lines
 
 
-def generate_report(findings, all_pages, clusters, ai_readiness):
+def _key_issues_lines(grouped_issues):
+    lines = ["KEY ISSUES", ""]
+    if not grouped_issues:
+        lines.append("(No grouped topic-overlap issues.)")
+        lines.append("")
+        return lines
+
+    for g in grouped_issues:
+        lines.append(f"- {g['title']} [{g['priority']}]")
+        lines.append(f"  {g['summary']}")
+        lines.append(f"  Instances found: {g['count']}")
+        lines.append("  Example:")
+        examples = g.get("examples") or []
+        if examples:
+            for url in examples[0].get("pages", []):
+                lines.append(f"    - {url}")
+        lines.append("")
+
+    return lines
+
+
+def generate_report(findings, grouped_issues, all_pages, clusters, ai_readiness):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
     low = sum(1 for f in findings if f.get("priority") == "LOW")
@@ -75,6 +96,7 @@ def generate_report(findings, all_pages, clusters, ai_readiness):
         "",
     ]
     lines.extend(_executive_insights_lines(findings))
+    lines.extend(_key_issues_lines(grouped_issues))
     lines.extend(
         [
         "SUMMARY",
