@@ -1,5 +1,24 @@
 from html import escape
 
+_WRAPPER = (
+    'style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; '
+    "max-width: 920px; line-height: 1.55; color: #1a1a1a; padding: 28px 32px; "
+    'background: #f5f6f8; border-radius: 12px;"'
+)
+_SECTION = (
+    'style="margin-bottom: 36px; padding: 22px 26px; border-radius: 10px; '
+    "background: #fafbfd; border: 1px solid #e4e7ec; "
+    'box-shadow: 0 1px 3px rgba(0,0,0,0.04);"'
+)
+_SCORE_BOX = (
+    'style="padding: 18px 22px; border-radius: 8px; background: #f8f9fa; '
+    'border: 1px solid #dee1e5;"'
+)
+_FINDING_CARD = (
+    'style="border-left: 4px solid #f0ad4e; padding: 12px 14px; margin-bottom: 14px; '
+    'background: #fffdf8; border-radius: 0 8px 8px 0;"'
+)
+
 
 def _primary_issue_display(title: str) -> str:
     mapping = {
@@ -105,30 +124,42 @@ def generate_report(
     score_color = _score_color(label)
 
     parts = [
-        '<div style="font-family: system-ui, -apple-system, sans-serif; '
-        'max-width: 900px; line-height: 1.5; color: #222;">',
-        f"<h1>{esc('Site Audit Report')}</h1>",
+        f"<div {_WRAPPER}>",
+        f'<h1 style="margin: 0 0 8px 0; font-size: 1.75rem;">{esc("Site Audit Report")}</h1>',
+        f'<p style="margin: 0 0 24px 0; color: #5c6370; font-size: 0.95rem;">'
+        f"{esc('Structured analysis — grouped issues, not raw duplicate counts.')}</p>",
     ]
 
     # Executive insights
     bullets = _executive_insights_bullets(findings)
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Executive insights')}</h2>")
-    parts.append("<ul>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Executive insights")}</h2>'
+    )
+    parts.append("<ul style=\"margin: 0; padding-left: 1.25em;\">")
     for b in bullets:
-        parts.append(f"<li>{esc(b)}</li>")
+        parts.append(f"<li style=\"margin-bottom: 8px;\">{esc(b)}</li>")
     parts.append("</ul></div>")
 
     # Content health score
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Content Health Score')}</h2>")
+    parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<p style="font-size: 24px; font-weight: bold; color: {score_color}; '
-        f'margin: 8px 0 16px 0;">'
-        f"{esc(str(score))} / 100 — {esc(label)}</p>"
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Content Health Score")}</h2>'
     )
-    parts.append(f"<p><strong>{esc('Primary issues:')}</strong></p>")
-    parts.append("<ul>")
+    parts.append(f"<div {_SCORE_BOX}>")
+    parts.append(
+        f'<p style="font-size: 32px; font-weight: 700; color: {score_color}; '
+        f'margin: 0 0 6px 0; letter-spacing: -0.02em;">'
+        f"{esc(str(score))} <span style=\"font-weight: 500; color: #6c757d;\">/ 100</span></p>"
+    )
+    parts.append(
+        f'<p style="margin: 0 0 16px 0; font-size: 1.1rem; font-weight: 600; '
+        f'color: #333;">{esc(label)}</p>'
+    )
+    parts.append(f"<p style=\"margin: 0 0 8px 0;\"><strong>{esc('Primary issues:')}</strong></p>")
+    parts.append("<ul style=\"margin: 0; padding-left: 1.25em;\">")
     if grouped_issues:
         for g in grouped_issues[:3]:
             parts.append(
@@ -138,18 +169,22 @@ def generate_report(
         parts.append(
             f"<li>{esc('No grouped overlap patterns detected in this run')}</li>"
         )
-    parts.append("</ul></div>")
+    parts.append("</ul></div></div>")
 
     # Key issues
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Key issues')}</h2>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Key issues")}</h2>'
+    )
     if not grouped_issues:
         parts.append(f"<p>{esc('(No grouped topic-overlap issues.)')}</p>")
     else:
         for g in grouped_issues:
             parts.append(
-                '<div style="border: 1px solid #e0e0e0; border-radius: 8px; '
-                'padding: 12px 16px; margin-bottom: 12px; background: #fafafa;">'
+                '<div style="border: 1px solid #e8eaed; border-radius: 8px; '
+                'border-left: 4px solid #5bc0de; padding: 14px 16px; margin-bottom: 14px; '
+                'background: #ffffff;">'
             )
             parts.append(
                 f"<p><strong>{esc(g['title'])}</strong> "
@@ -169,8 +204,11 @@ def generate_report(
     parts.append("</div>")
 
     # Top recommended actions
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Top recommended actions')}</h2>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Top recommended actions")}</h2>'
+    )
     if not top_actions:
         parts.append(
             f"<p>{esc('(No top actions generated from grouped issues.)')}</p>"
@@ -187,8 +225,11 @@ def generate_report(
     parts.append("</div>")
 
     # Summary
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Summary')}</h2>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Summary")}</h2>'
+    )
     parts.append("<ul>")
     parts.append(f"<li>{esc('Pages analyzed:')} {len(all_pages)}</li>")
     parts.append(f"<li>{esc('Clusters found:')} {len(clusters)}</li>")
@@ -198,8 +239,11 @@ def generate_report(
     parts.append("</ul></div>")
 
     # AI readiness
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('AI readiness signals')}</h2>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("AI readiness signals")}</h2>'
+    )
     parts.append("<ul>")
     parts.append(
         f"<li>{esc('Guide content present:')} "
@@ -220,8 +264,11 @@ def generate_report(
     parts.append("</ul></div>")
 
     # Findings (duplication clusters)
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Findings')}</h2>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Findings")}</h2>'
+    )
     if not dup_findings:
         parts.append(f"<p>{esc('(No cluster duplication findings.)')}</p>")
     for f in dup_findings:
@@ -231,10 +278,7 @@ def generate_report(
         pri = f.get("priority", "MEDIUM")
         sim = f.get("avg_similarity", 0)
         action = f.get("action", "")
-        parts.append(
-            '<div style="border-left: 4px solid #337ab7; padding-left: 12px; '
-            'margin-bottom: 16px;">'
-        )
+        parts.append(f"<div {_FINDING_CARD}>")
         parts.append(
             f"<p><strong>{esc(lt)} {esc('duplication')}</strong> "
             f"({esc(market)}) <span>[{esc(pri)}]</span></p>"
@@ -248,8 +292,11 @@ def generate_report(
     parts.append("</div>")
 
     # Topic overlap
-    parts.append('<div style="margin-bottom: 24px;">')
-    parts.append(f"<h2>{esc('Topic overlap (high value findings)')}</h2>")
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Topic overlap (high value findings)")}</h2>'
+    )
     if not overlap_findings:
         parts.append(
             f"<p>{esc('(No cross-cluster topic overlaps above threshold.)')}</p>"
@@ -262,10 +309,7 @@ def generate_report(
             sim = f.get("similarity", 0)
             action = f.get("action", "")
             impact = f.get("impact", "")
-            parts.append(
-                '<div style="border-left: 4px solid #c9302c; padding-left: 12px; '
-                'margin-bottom: 16px;">'
-            )
+            parts.append(f"<div {_FINDING_CARD}>")
             parts.append(
                 f"<p><strong>{esc('Potential topic overlap')}</strong> "
                 f"({esc(market)}) <span>[{esc(pri)}]</span></p>"

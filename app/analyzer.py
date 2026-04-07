@@ -309,8 +309,9 @@ def group_findings(findings):
                     "title": "Product Positioning Overlap",
                     "priority": "HIGH",
                     "summary": (
-                        "Multiple product pages overlap in positioning and may confuse "
-                        "users choosing between plans."
+                        "Multiple product pages overlap in positioning, which can dilute "
+                        "conversion rates, create decision friction for users, and reduce "
+                        "the effectiveness of each page in search."
                     ),
                     "count": len(items),
                     "examples": items[:2],
@@ -323,8 +324,9 @@ def group_findings(findings):
                     "title": "Cross-Market Content Duplication",
                     "priority": "HIGH",
                     "summary": (
-                        "Content between AU and NZ sites lacks differentiation and "
-                        "localization."
+                        "Parallel AU and NZ pages weaken localization and send muddled "
+                        "relevance signals to Google, hurting rankings and trust in each "
+                        "market."
                     ),
                     "count": len(items),
                     "examples": items[:2],
@@ -337,8 +339,9 @@ def group_findings(findings):
                     "title": "Informational Content Overlap",
                     "priority": "HIGH",
                     "summary": (
-                        "Multiple pages target similar informational intent, reducing "
-                        "SEO effectiveness."
+                        "Multiple guides target similar intent, causing keyword "
+                        "cannibalization and splitting topical authority so neither page "
+                        "ranks as strongly as it could."
                     ),
                     "count": len(items),
                     "examples": items[:2],
@@ -350,7 +353,10 @@ def group_findings(findings):
                 {
                     "title": "General Content Overlap",
                     "priority": "MEDIUM",
-                    "summary": "Some content may overlap and should be reviewed.",
+                    "summary": (
+                        "Overlapping pages create user friction and dilute clarity for "
+                        "search engines about which URL should own each topic."
+                    ),
                     "count": len(items),
                     "examples": items[:2],
                 }
@@ -444,11 +450,11 @@ def generate_top_actions(grouped_issues):
     return actions[:3]
 
 
-def calculate_content_health_score(findings, grouped_issues, clusters, ai_readiness):
+def calculate_content_health_score(_findings, grouped_issues, clusters, ai_readiness):
     score = 70
 
-    high = sum(1 for f in findings if f.get("priority") == "HIGH")
-    medium = sum(1 for f in findings if f.get("priority") == "MEDIUM")
+    high = sum(1 for g in grouped_issues if g.get("priority") == "HIGH")
+    medium = sum(1 for g in grouped_issues if g.get("priority") == "MEDIUM")
 
     score -= high * 6
     score -= medium * 3
