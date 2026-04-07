@@ -19,6 +19,11 @@ _FINDING_CARD = (
     'background: #fffdf8; border-radius: 0 8px 8px 0;"'
 )
 
+ACTION_TYPE_HINTS = {
+    "differentiate": "Clarify positioning between pages",
+    "reposition": "Adjust intent targeting",
+}
+
 
 def render_methodology() -> str:
     esc = escape
@@ -229,11 +234,19 @@ def generate_report(
             f'background: #198754; color: #fff; font-size: 0.75rem; font-weight: 600; '
             f'margin-right: 8px;">{esc(str(at).upper())}</span>'
         )
+        hint = ACTION_TYPE_HINTS.get(str(at).lower().strip(), "")
         parts.append(
             '<div style="border-left: 4px solid #198754; padding: 14px 16px; margin-bottom: 12px; '
             'background: #f6fff9; border-radius: 0 8px 8px 0;">'
             f'<p style="margin: 0 0 8px 0;">{badge}'
             f'<span style="font-weight: 700;">{esc(str(step))}. {esc(title)}</span></p>'
+        )
+        if hint:
+            parts.append(
+                f'<p style="margin: -4px 0 10px 4px; font-size: 0.82rem; color: #495057;">'
+                f"{esc(hint)}</p>"
+            )
+        parts.append(
             f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">{esc(desc)}</p>'
             f'<p style="margin: 0 0 8px 0; font-size: 0.88rem; color: #495057;">'
             f"<strong>{esc('Expected outcome:')}</strong> {esc(outcome)}</p>"

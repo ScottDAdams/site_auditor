@@ -33,6 +33,7 @@ from app.ai_insights import (
     validate_ai_output,
     validate_roadmap_output,
 )
+from app.business_context import build_business_context
 from app.report import generate_report
 
 app = FastAPI()
@@ -141,7 +142,9 @@ def run_audit(sites: str = Form(...)):
     label = score_label(score)
 
     metrics = compute_audit_metrics(pages, clusters, all_findings)
+    business_context = build_business_context(pages)
     analysis_payload = {
+        "business_context": business_context,
         "summary": {
             "pages": len(pages),
             "clusters": len(clusters),
@@ -210,7 +213,9 @@ def run_audit(sites: str = Form(...)):
             ai_insights = fb
         try:
             raw_roadmap = generate_execution_roadmap(analysis_payload, llm)
-            if validate_roadmap_output(raw_roadmap):
+            if validate_roadmap_output(
+                raw_roadmap, analysis_payload.get("business_context")
+            ):
                 execution_roadmap = raw_roadmap
             else:
                 execution_roadmap = build_fallback_roadmap(analysis_payload)
