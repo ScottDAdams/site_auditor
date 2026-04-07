@@ -12,7 +12,13 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app.crawler import crawl_sites
 from app.embeddings import generate_embeddings
 from app.clustering import cluster_pages
-from app.analyzer import analyze_clusters, is_valid_cluster
+from app.analyzer import (
+    analyze_clusters,
+    analyze_overlaps,
+    compute_ai_readiness,
+    detect_topic_overlap,
+    is_valid_cluster,
+)
 from app.report import generate_report
 
 app = FastAPI()
@@ -103,13 +109,20 @@ def run_audit(sites: str = Form(...)):
     findings = analyze_clusters(clusters)
     print("Findings:", len(findings))
 
-    report = generate_report(findings)
+    overlaps = detect_topic_overlap(pages, embeddings, clusters)
+    overlap_findings = analyze_overlaps(overlaps)
+    print("Topic overlap pairs:", len(overlap_findings))
+
+    all_findings = findings + overlap_findings
+
+    ai_readiness = compute_ai_readiness(pages)
+    report = generate_report(all_findings, pages, clusters, ai_readiness)
 
     STATE.update({
         "status": "done",
         "pages": pages,
         "clusters": [c for c in clusters if is_valid_cluster(c)],
-        "findings": findings,
+        "findings": all_findings,
         "report": report
     })
 

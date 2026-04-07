@@ -1,5 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+
+
+def get_domain(url: str) -> str:
+    return urlparse(url).netloc.replace("www.", "")
+
 
 def extract_text(html):
     soup = BeautifulSoup(html, "html.parser")
@@ -80,13 +86,17 @@ def crawl_site(base_url, max_pages=20):
         if not text:
             continue
 
+        path = url.replace(base_url, "")
+        word_count = len(text.split())
         page = {
             "url": url,
+            "path": path,
+            "domain": get_domain(url),
+            "text": text,
+            "word_count": word_count,
+            "type": classify_page(url, text),
             "content": text,
-            "site": base_url,
-            "path": url.replace(base_url, ""),
         }
-        page["type"] = classify_page(url, text)
         pages.append(page)
 
         soup = BeautifulSoup(response.text, "html.parser")
