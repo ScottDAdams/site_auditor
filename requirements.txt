@@ -8,3 +8,4 @@ numpy
 jinja2
 python-multipart
 python-dotenv
+playwright

@@ -84,10 +84,12 @@ def home(request: Request):
         "clusters": [
             {
                 "avg_similarity": c.get("avg_similarity"),
+                "dominant_url": c.get("dominant_url"),
+                "competing_urls": c.get("competing_urls"),
                 "pages": [
                     {"url": p.get("url"), "type": p.get("type")}
                     for p in c.get("pages", [])
-                ]
+                ],
             }
             for c in STATE.get("clusters", [])
         ],
@@ -157,12 +159,15 @@ def run_audit(sites: str = Form(...)):
         },
         "grouped_issues": grouped_issues,
         "ai_readiness": ai_readiness,
+        "page_urls": [p["url"] for p in pages],
         "clusters": [
             {
                 "similarity": c["avg_similarity"],
-                "pages": [p["url"] for p in c["pages"][:3]],
+                "dominant_url": c.get("dominant_url"),
+                "competing_urls": c.get("competing_urls") or [],
+                "pages": [p["url"] for p in c["pages"][:8]],
             }
-            for c in clusters[:5]
+            for c in clusters[:12]
         ],
     }
 
@@ -177,15 +182,30 @@ def run_audit(sites: str = Form(...)):
                 ai_insights = raw_insights
             else:
                 fb = build_fallback_insights(analysis_payload)
+                anchor = ""
+                for c in analysis_payload.get("clusters") or []:
+                    if c.get("dominant_url"):
+                        anchor = str(c["dominant_url"])
+                        break
+                if not anchor and analysis_payload.get("page_urls"):
+                    anchor = analysis_payload["page_urls"][0]
                 fb["verdict"] = (
-                    "AI response failed validation (missing fields or evidence). "
-                    "Showing data-backed fallback."
+                    f"AI JSON failed validation; using crawl-backed decision data"
+                    f"{f' anchored at {anchor}' if anchor else ''}."
                 )
                 ai_insights = fb
         except Exception as exc:
             fb = build_fallback_insights(analysis_payload)
+            anchor = ""
+            for c in analysis_payload.get("clusters") or []:
+                if c.get("dominant_url"):
+                    anchor = str(c["dominant_url"])
+                    break
+            if not anchor and analysis_payload.get("page_urls"):
+                anchor = analysis_payload["page_urls"][0]
             fb["verdict"] = (
-                f"AI interpretation error: {exc}. Showing data-backed fallback."
+                f"AI call failed ({exc}); using crawl-backed narrative"
+                f"{f' from {anchor}' if anchor else ''}."
             )
             ai_insights = fb
         try:

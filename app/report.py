@@ -6,7 +6,7 @@ _WRAPPER = (
     'background: #f5f6f8; border-radius: 12px;"'
 )
 _SECTION = (
-    'style="margin-bottom: 32px; padding: 22px 26px; border-radius: 10px; '
+    'class="audit-section" style="margin-bottom: 32px; padding: 22px 26px; border-radius: 10px; '
     "background: #fafbfd; border: 1px solid #e4e7ec; "
     'box-shadow: 0 1px 3px rgba(0,0,0,0.04);"'
 )
@@ -68,37 +68,55 @@ def _score_color(label: str) -> str:
     }.get(label, "#d9534f")
 
 
-def _metric_cards(esc, metrics: dict) -> str:
-    cards = [
-        ("Overlap rate", metrics.get("overlap_rate"), "Share of pages in an overlap signal"),
-        (
-            "Avg cluster similarity",
-            metrics.get("avg_cluster_similarity"),
-            "Mean similarity within duplicate clusters",
-        ),
-        (
-            "Content uniqueness",
-            metrics.get("content_uniqueness_score"),
-            "1 − cluster similarity (higher = more distinct)",
-        ),
-    ]
+def _metrics_explained_table(esc, rows: list, fallback_metrics: dict) -> str:
+    if not rows and fallback_metrics:
+        rows = [
+            {
+                "metric": "overlap_rate",
+                "value": str(fallback_metrics.get("overlap_rate", "")),
+                "implication": "Share of pages touched by overlap signals.",
+            },
+            {
+                "metric": "avg_cluster_similarity",
+                "value": str(fallback_metrics.get("avg_cluster_similarity", "")),
+                "implication": "Mean embedding similarity inside duplicate clusters.",
+            },
+            {
+                "metric": "content_uniqueness_score",
+                "value": str(fallback_metrics.get("content_uniqueness_score", "")),
+                "implication": "Higher means more distinct copy between competing URLs.",
+            },
+        ]
     inner = []
-    for title, val, hint in cards:
-        v = val if val is not None else "—"
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
         inner.append(
-            '<div style="flex: 1; min-width: 140px; padding: 14px 16px; background: #fff; '
+            '<div style="margin-bottom: 14px; padding: 14px 16px; background: #fff; '
             'border: 1px solid #e4e7ec; border-radius: 8px;">'
-            f'<p style="margin: 0 0 6px 0; font-size: 0.75rem; text-transform: uppercase; '
-            f'letter-spacing: 0.04em; color: #6c757d;">{esc(title)}</p>'
-            f'<p style="margin: 0 0 6px 0; font-size: 1.35rem; font-weight: 700; color: #1a1a1a;">'
-            f"{esc(str(v))}</p>"
-            f'<p style="margin: 0; font-size: 0.82rem; color: #868e96;">{esc(hint)}</p>'
+            f'<p style="margin: 0 0 4px 0; font-size: 0.72rem; text-transform: uppercase; '
+            f'color: #868e96;">{esc(str(row.get("metric", "")))}</p>'
+            f'<p style="margin: 0 0 8px 0; font-size: 1.2rem; font-weight: 700;">'
+            f'{esc(str(row.get("value", "")))}</p>'
+            f'<p style="margin: 0; font-size: 0.92rem; color: #343a40;">'
+            f'<strong>{esc("Why it matters")}:</strong> {esc(str(row.get("implication", "")))}</p>'
             "</div>"
         )
+    return "".join(inner) or f"<p>{esc('(No metrics rows.)')}</p>"
+
+
+def _primary_drivers_block(esc, primary_clusters: list) -> str:
+    if not primary_clusters:
+        return ""
+    lis = "".join(
+        f"<li style=\"margin-bottom: 8px;\">{esc(str(x))}</li>" for x in primary_clusters
+    )
     return (
-        '<div style="display: flex; flex-wrap: wrap; gap: 14px;">'
-        + "".join(inner)
-        + "</div>"
+        '<div style="margin-top: 18px; padding: 14px 16px; background: #f8f9fa; '
+        'border-radius: 8px; border: 1px solid #e9ecef;">'
+        f'<p style="margin: 0 0 10px 0; font-weight: 700;">{esc("Primary drivers of this issue")}</p>'
+        f'<ul style="margin: 0; padding-left: 1.2em;">{lis}</ul>'
+        "</div>"
     )
 
 
@@ -162,12 +180,16 @@ def generate_report(
         "</div>"
     )
 
-    # Key metrics
+    # Key metrics (interpreted)
     parts.append(f"<div {_SECTION}>")
     parts.append(
         f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Key metrics")}</h2>'
     )
-    parts.append(_metric_cards(esc, metrics))
+    parts.append(
+        _metrics_explained_table(
+            esc, ai.get("metrics_explained") or [], metrics
+        )
+    )
     parts.append("</div>")
 
     # Core analysis
@@ -179,6 +201,7 @@ def generate_report(
     parts.append(_core_block(esc, "Recommendation", ai.get("recommendation", "")))
     parts.append(_core_block(esc, "Business impact", ai.get("business_impact", "")))
     parts.append(_core_block(esc, "If no action is taken", ai.get("inaction_risk", "")))
+    parts.append(_primary_drivers_block(esc, ai.get("primary_clusters") or []))
     parts.append("</div>")
 
     # 30-day roadmap
@@ -197,22 +220,37 @@ def generate_report(
         step = item.get("step", "")
         title = item.get("title", "")
         desc = item.get("description", "")
-        impact = item.get("expected_impact", "")
-        urls = item.get("affected_urls") or []
+        at = item.get("action_type", "")
+        outcome = item.get("expected_outcome") or item.get("expected_impact") or ""
+        urls = item.get("target_urls") or item.get("affected_urls") or []
+        evrefs = item.get("evidence_refs") or []
+        badge = (
+            f'<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; '
+            f'background: #198754; color: #fff; font-size: 0.75rem; font-weight: 600; '
+            f'margin-right: 8px;">{esc(str(at).upper())}</span>'
+        )
         parts.append(
             '<div style="border-left: 4px solid #198754; padding: 14px 16px; margin-bottom: 12px; '
             'background: #f6fff9; border-radius: 0 8px 8px 0;">'
-            f'<p style="margin: 0 0 6px 0; font-weight: 700;">'
-            f'{esc(str(step))}. {esc(title)}</p>'
+            f'<p style="margin: 0 0 8px 0;">{badge}'
+            f'<span style="font-weight: 700;">{esc(str(step))}. {esc(title)}</span></p>'
             f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">{esc(desc)}</p>'
             f'<p style="margin: 0 0 8px 0; font-size: 0.88rem; color: #495057;">'
-            f"<strong>{esc('Expected impact:')}</strong> {esc(impact)}</p>"
+            f"<strong>{esc('Expected outcome:')}</strong> {esc(outcome)}</p>"
         )
         if urls:
-            parts.append(f'<p style="margin: 0; font-size: 0.85rem;"><strong>{esc("URLs:")}</strong></p><ul>')
-            for u in urls[:12]:
+            parts.append(
+                f'<p style="margin: 0 0 6px 0; font-size: 0.85rem;"><strong>{esc("Target URLs:")}</strong></p><ul>'
+            )
+            for u in urls[:16]:
                 parts.append(f"<li>{esc(u)}</li>")
             parts.append("</ul>")
+        if evrefs:
+            parts.append(
+                f'<p style="margin: 8px 0 0 0; font-size: 0.82rem; color: #495057;">'
+                f"<strong>{esc('Evidence refs:')}</strong> "
+                f"{esc(', '.join(str(x) for x in evrefs))}</p>"
+            )
         parts.append("</div>")
     parts.append("</div>")
 
@@ -222,30 +260,31 @@ def generate_report(
         f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
         f'{esc("Supporting evidence")}</h2>'
     )
-    anchors = ai.get("metric_anchors") or []
-    if anchors:
-        parts.append(
-            f'<p style="margin: 0 0 10px 0; font-size: 0.85rem; color: #495057;">'
-            f"<strong>{esc('Metric anchors')}</strong></p><ul>"
-        )
-        for a in anchors:
-            parts.append(f"<li style=\"margin-bottom: 6px;\">{esc(str(a))}</li>")
-        parts.append("</ul>")
     for ev in ai.get("supporting_evidence") or []:
         if not isinstance(ev, dict):
             continue
         issue = ev.get("issue", "")
         urls = ev.get("urls") or []
+        mrefs = ev.get("metric_refs") or []
         parts.append(
             '<div style="border: 1px solid #dee2e6; padding: 14px 16px; margin-bottom: 12px; '
             'background: #ffffff; border-radius: 8px;">'
             f'<p style="margin: 0 0 10px 0;">{esc(issue)}</p>'
         )
         if urls:
-            parts.append("<ul style=\"margin: 0;\">")
+            parts.append(
+                f'<p style="margin: 0 0 6px 0; font-size: 0.85rem;"><strong>{esc("URLs")}</strong></p>'
+                '<ul style="margin: 0;">'
+            )
             for u in urls:
                 parts.append(f"<li>{esc(u)}</li>")
             parts.append("</ul>")
+        if mrefs:
+            parts.append(
+                f'<p style="margin: 10px 0 0 0; font-size: 0.85rem; color: #495057;">'
+                f"<strong>{esc('Referenced metrics')}</strong> "
+                f"{esc(', '.join(str(x) for x in mrefs))}</p>"
+            )
         parts.append("</div>")
     parts.append("</div>")
 
@@ -334,6 +373,17 @@ def generate_report(
         )
         parts.append(f"<p>{esc('Action:')} {esc(action)}</p>")
         parts.append(f"<p>{esc('Similarity:')} {esc(str(sim))}</p>")
+        dom = f.get("dominant_url")
+        comp = f.get("competing_urls") or []
+        if dom:
+            parts.append(
+                f'<p style="font-size: 0.9rem;"><strong>{esc("Canonical URL: ")}</strong> {esc(dom)}</p>'
+            )
+        if comp:
+            parts.append(
+                f'<p style="font-size: 0.9rem;"><strong>{esc("Competing URLs: ")}</strong> '
+                f'{esc(", ".join(comp[:8]))}</p>'
+            )
         parts.append("<ul>")
         for p in f["pages"]:
             parts.append(f"<li>{esc(p)}</li>")
@@ -369,6 +419,17 @@ def generate_report(
             if impact:
                 parts.append(f"<p>{esc('Impact:')} {esc(impact)}</p>")
             parts.append(f"<p>{esc('Similarity:')} {esc(f'{sim:.3f}')}</p>")
+            dom = f.get("dominant_url")
+            comp = f.get("competing_urls") or []
+            if dom:
+                parts.append(
+                    f'<p style="font-size: 0.9rem;"><strong>{esc("Canonical URL: ")}</strong> {esc(dom)}</p>'
+                )
+            if comp:
+                parts.append(
+                    f'<p style="font-size: 0.9rem;"><strong>{esc("Competing URLs: ")}</strong> '
+                    f'{esc(", ".join(comp))}</p>'
+                )
             parts.append("<ul>")
             for p in f["pages"]:
                 parts.append(f"<li>{esc(p)}</li>")

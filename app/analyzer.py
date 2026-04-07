@@ -221,6 +221,8 @@ def analyze_clusters(clusters):
                 "avg_similarity": c["avg_similarity"],
                 "pages": [p["url"] for p in pages],
                 "duplication_type": dup_type,
+                "dominant_url": c.get("dominant_url"),
+                "competing_urls": c.get("competing_urls") or [],
             }
         )
 
@@ -335,10 +337,20 @@ def analyze_overlaps(overlaps):
             action = "Localize content to better differentiate AU vs NZ audiences."
         else:
             priority = "MEDIUM"
-            action = "Review for overlapping intent"
+            action = (
+                "Pick one canonical URL, then merge or redirect the other so only one page owns the intent."
+            )
 
         impact = get_impact(types, cross_market)
         dup_type = classify_topic_overlap(o)
+
+        u1, u2 = o["url_1"], o["url_2"]
+        p1 = urlparse(u1).path or ""
+        p2 = urlparse(u2).path or ""
+        if get_depth(p1) <= get_depth(p2):
+            dom, comp = u1, [u2]
+        else:
+            dom, comp = u2, [u1]
 
         findings.append(
             {
@@ -347,10 +359,12 @@ def analyze_overlaps(overlaps):
                 "action": action,
                 "impact": impact,
                 "similarity": o["similarity"],
-                "pages": [o["url_1"], o["url_2"]],
+                "pages": [u1, u2],
                 "cross_market": cross_market,
                 "overlap_types": types,
                 "duplication_type": dup_type,
+                "dominant_url": dom,
+                "competing_urls": comp,
             }
         )
 
@@ -395,9 +409,8 @@ def group_findings(findings):
                     "title": "Product Positioning Overlap",
                     "priority": "HIGH",
                     "summary": (
-                        "Multiple product pages overlap in positioning, which can dilute "
-                        "conversion rates, create decision friction for users, and reduce "
-                        "the effectiveness of each page in search."
+                        "Product URLs in this group duplicate positioning, which dilutes "
+                        "conversion rates, adds decision friction, and weakens each page in search."
                     ),
                     "count": len(items),
                     "examples": items[:2],
@@ -425,9 +438,8 @@ def group_findings(findings):
                     "title": "Informational Content Overlap",
                     "priority": "HIGH",
                     "summary": (
-                        "Multiple guides target similar intent, causing keyword "
-                        "cannibalization and splitting topical authority so neither page "
-                        "ranks as strongly as it could."
+                        "Guide URLs in this group target the same intent, causing keyword "
+                        "cannibalization and split authority so neither URL ranks at full strength."
                     ),
                     "count": len(items),
                     "examples": items[:2],
