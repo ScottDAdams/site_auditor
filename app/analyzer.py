@@ -183,6 +183,30 @@ def detect_topic_overlap(pages, embeddings, clusters, threshold=0.85):
     return overlaps[:20]
 
 
+def get_impact(types, cross_market):
+    if "product" in types:
+        return (
+            "This overlap can confuse users comparing plans, "
+            "reduce conversion clarity, and weaken product positioning."
+        )
+
+    if "guide" in types:
+        return (
+            "This overlap can dilute SEO authority, create keyword cannibalization, "
+            "and reduce visibility in AI-driven search results."
+        )
+
+    if cross_market:
+        return (
+            "This reduces localization effectiveness and may signal duplicate content "
+            "to search engines across regions."
+        )
+
+    return (
+        "This may create redundant content and reduce overall site clarity."
+    )
+
+
 def analyze_overlaps(overlaps):
     findings = []
     seen_pairs = set()
@@ -221,11 +245,14 @@ def analyze_overlaps(overlaps):
             priority = "MEDIUM"
             action = "Review for overlapping intent"
 
+        impact = get_impact(types, cross_market)
+
         findings.append(
             {
                 "type": "topic_overlap",
                 "priority": priority,
                 "action": action,
+                "impact": impact,
                 "similarity": o["similarity"],
                 "pages": [o["url_1"], o["url_2"]],
                 "cross_market": cross_market,

@@ -2,27 +2,50 @@ def _executive_insights_lines(findings):
     lines = ["EXECUTIVE INSIGHTS", ""]
     high_n = sum(1 for f in findings if f.get("priority") == "HIGH")
     med_n = sum(1 for f in findings if f.get("priority") == "MEDIUM")
-    any_cross = any(f.get("cross_market") for f in findings)
     overlap = [f for f in findings if f.get("type") == "topic_overlap"]
+    any_cross = any(f.get("cross_market") for f in findings)
     product_positioning = any(
         "Product pages overlap" in f.get("action", "") for f in overlap
     )
 
-    lines.append(f"- {high_n} high-priority content conflicts identified")
+    if high_n > 0:
+        if any("plans" in f.get("impact", "") for f in overlap):
+            lines.append(
+                f"- {high_n} high-priority content conflicts impacting product "
+                "clarity and conversion"
+            )
+        elif any("SEO authority" in f.get("impact", "") for f in overlap):
+            lines.append(
+                f"- {high_n} high-priority content conflicts impacting SEO "
+                "authority and AI visibility"
+            )
+        else:
+            lines.append(
+                f"- {high_n} high-priority content conflicts impacting site "
+                "clarity and strategic positioning"
+            )
 
     if any_cross:
         lines.append(
-            "- Cross-market duplication is present between AU and NZ sites"
+            "- Cross-market duplication reduces localization effectiveness "
+            "between AU and NZ"
         )
 
     if product_positioning:
         lines.append(
-            "- Product positioning overlap detected in policy pages"
+            "- Product pages show overlapping positioning, which may confuse "
+            "customer decision-making"
         )
 
-    if high_n > 0 or med_n > 0 or len(findings) > 0:
+    if high_n == 0 and (med_n > 0 or len(findings) > 0):
         lines.append(
-            "- Content differentiation opportunities exist across key pages"
+            "- Content patterns suggest opportunities to sharpen differentiation "
+            "across key pages"
+        )
+
+    if len(lines) == 2:
+        lines.append(
+            "- No major conflicts flagged; continue monitoring content drift over time"
         )
 
     lines.append("")
@@ -100,6 +123,9 @@ def generate_report(findings, all_pages, clusters, ai_readiness):
 
             lines.append(f"- Potential topic overlap ({market}) [{pri}]")
             lines.append(f"  Action: {action}")
+            impact = f.get("impact", "")
+            if impact:
+                lines.append(f"  Impact: {impact}")
             lines.append(f"  Similarity: {sim:.3f}")
             for p in f["pages"]:
                 lines.append(f"  - {p}")
