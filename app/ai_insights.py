@@ -24,6 +24,22 @@ BANNED_VERBS_RE = re.compile(
     r"\b(improve|optimi[sz]e|enhance|refine|strengthen|align)\b",
     re.I,
 )
+# Vague copy instructions (execution steps must state concrete edits).
+PAGE_CHANGE_VAGUE_RE = re.compile(
+    r"\b(clarify|improve|optimi[sz]e|enhance|refine|strengthen|align)\b",
+    re.I,
+)
+PAGE_CHANGE_TYPES = frozenset(
+    {
+        "add_section",
+        "remove_section",
+        "rewrite_section",
+        "add_comparison",
+        "change_heading",
+        "adjust_cta",
+    }
+)
+MIN_INSTRUCTION_LEN = 24
 VERDICT_FLUFF_RE = re.compile(
     r"\b(significant|various|multiple)\b",
     re.I,
@@ -102,6 +118,8 @@ If your output could apply to another website, it is wrong.
 Every statement must tie to a URL from the payload or a numeric value from payload.metrics.
 Do not use: improve, optimize, enhance, refine, strengthen, align.
 Use concrete operations: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition, none (only where allowed by business_context.allowed_actions). Use "none" only when no structural content action is appropriate (e.g. technical-only issues already routed elsewhere).
+
+For roadmap steps with action_type "differentiate" or "reposition", each step MUST include page_changes: at least 2 objects, each with url (full https URL from payload), change_type (one of: add_section, remove_section, rewrite_section, add_comparison, change_heading, adjust_cta), and instruction (specific edit — what to add/remove/rewrite; MUST NOT use: clarify, improve, optimize, enhance, refine, strengthen, align).
 """
 
 CONSTRAINT_PROMPT = """
@@ -206,7 +224,19 @@ Each step MUST:
 - NEVER use delete on protected_paths or core_product URLs; NEVER merge/redirect across regions when separate_regions is true
 - include target_urls with at least one real https URL from the payload
 - be atomic and testable (verifiable in staging)
-- avoid banned verbs: improve, optimize, enhance, refine, strengthen, align
+- avoid banned verbs in title and description: improve, optimize, enhance, refine, strengthen, align
+
+DIFFERENTIATE and REPOSITION steps — REQUIRED shape (both action types):
+- MUST include "page_changes": an array with AT LEAST 2 items.
+- Each item: {{ "url": "<https URL from payload>", "change_type": "<one allowed value>", "instruction": "<specific edit>" }}
+- Allowed change_type values ONLY: add_section, remove_section, rewrite_section, add_comparison, change_heading, adjust_cta
+- Each instruction MUST describe WHAT to change on the page (add/remove/rewrite which block, what new copy structure, etc.)
+- Instructions MUST NOT contain: clarify, improve, optimize, enhance, refine, strengthen, align (or vague phrases like "clarify positioning between pages")
+
+GOOD instruction example: "Add a section comparing comprehensive vs annual multi-trip with explicit use cases and a decision table."
+BAD instruction example: "Clarify positioning between pages."
+
+Other action types (merge, redirect, rewrite, etc.) MAY omit page_changes or use an empty array [].
 
 DATA:
 {data}
@@ -216,10 +246,32 @@ Return JSON:
   "roadmap": [
     {{
       "step": 1,
+      "action_type": "differentiate",
+      "title": "",
+      "description": "",
+      "target_urls": [],
+      "page_changes": [
+        {{
+          "url": "https://example.com/page-a",
+          "change_type": "add_comparison",
+          "instruction": "Add a section comparing product tiers with explicit eligibility rules and pricing rows."
+        }},
+        {{
+          "url": "https://example.com/page-b",
+          "change_type": "rewrite_section",
+          "instruction": "Rewrite the hero body paragraph to target emergency-only buyers; remove shared sentences duplicated from page-a."
+        }}
+      ],
+      "expected_outcome": "",
+      "evidence_refs": []
+    }},
+    {{
+      "step": 2,
       "action_type": "merge",
       "title": "",
       "description": "",
       "target_urls": [],
+      "page_changes": [],
       "expected_outcome": "",
       "evidence_refs": []
     }}
@@ -304,6 +356,35 @@ def validate_ai_output(ai_output) -> bool:
     return True
 
 
+def _page_changes_ok_for_step(item: dict, action_type: str) -> bool:
+    if action_type not in ("differentiate", "reposition"):
+        pc = item.get("page_changes")
+        if pc is not None and not isinstance(pc, list):
+            return False
+        return True
+    pc = item.get("page_changes")
+    if not isinstance(pc, list) or len(pc) < 2:
+        return False
+    desc = str(item.get("description", ""))
+    if PAGE_CHANGE_VAGUE_RE.search(desc):
+        return False
+    for ch in pc:
+        if not isinstance(ch, dict):
+            return False
+        url = ch.get("url")
+        ct = (ch.get("change_type") or "").strip()
+        inst = ch.get("instruction")
+        if not url or not isinstance(url, str) or not url.strip():
+            return False
+        if ct not in PAGE_CHANGE_TYPES:
+            return False
+        if not isinstance(inst, str) or len(inst.strip()) < MIN_INSTRUCTION_LEN:
+            return False
+        if PAGE_CHANGE_VAGUE_RE.search(inst) or BANNED_VERBS_RE.search(inst):
+            return False
+    return True
+
+
 def _roadmap_step_ok(item: dict) -> bool:
     if not isinstance(item, dict):
         return False
@@ -314,6 +395,8 @@ def _roadmap_step_ok(item: dict) -> bool:
     if not isinstance(urls, list):
         return False
     if at == "none":
+        if item.get("page_changes") is not None and not isinstance(item.get("page_changes"), list):
+            return False
         return bool(item.get("title") or item.get("description"))
     if len(urls) < 1:
         return False
@@ -323,6 +406,8 @@ def _roadmap_step_ok(item: dict) -> bool:
         return False
     desc = item.get("description", "")
     if BANNED_VERBS_RE.search(desc):
+        return False
+    if not _page_changes_ok_for_step(item, at):
         return False
     return True
 
@@ -631,9 +716,74 @@ def _default_no_consolidation_roadmap_step() -> dict:
             "Detected duplication is due to technical URL variants, not content structure."
         ),
         "target_urls": [],
+        "page_changes": [],
         "expected_outcome": "Improved crawl consistency after canonical normalization.",
         "evidence_refs": [],
     }
+
+
+def _fallback_page_changes_two_urls(u0: str, u1: str) -> list:
+    return [
+        {
+            "url": u0,
+            "change_type": "change_heading",
+            "instruction": (
+                f"Rewrite the H1 and hero subheading to name one buyer problem this URL solves only; "
+                f"delete sentences duplicated verbatim from {u1}."
+            ),
+        },
+        {
+            "url": u1,
+            "change_type": "rewrite_section",
+            "instruction": (
+                f"Rewrite the first body section after the hero with examples unique to this URL; "
+                f"remove bullet lists that mirror the structure on {u0}."
+            ),
+        },
+    ]
+
+
+def _fallback_page_changes_regional(u0: str, u1: str) -> list:
+    return [
+        {
+            "url": u0,
+            "change_type": "add_section",
+            "instruction": (
+                f"Add a region-specific block: local contact details, currency, and coverage limits "
+                f"that do not appear on {u1}."
+            ),
+        },
+        {
+            "url": u1,
+            "change_type": "add_section",
+            "instruction": (
+                f"Add a region-specific block: local contact details, currency, and coverage limits "
+                f"that do not appear on {u0}."
+            ),
+        },
+    ]
+
+
+def _fallback_page_changes_reposition_one(u: str, peer: str | None = None) -> list:
+    peer_bit = f" Remove mirrored copy from {peer}." if peer else ""
+    return [
+        {
+            "url": u,
+            "change_type": "change_heading",
+            "instruction": (
+                f"Replace the hero H1 with one primary buyer intent for this URL only; "
+                f"drop generic claims repeated across sibling pages.{peer_bit}"
+            ),
+        },
+        {
+            "url": u,
+            "change_type": "adjust_cta",
+            "instruction": (
+                "Replace the primary CTA label and supporting line with an action tied to this page’s "
+                "single offer; remove duplicate CTA copy reused from overlapping URLs."
+            ),
+        },
+    ]
 
 
 def build_fallback_roadmap(payload: dict) -> dict:
@@ -682,34 +832,39 @@ def build_fallback_roadmap(payload: dict) -> dict:
         targets: list,
         outcome: str,
         refs: list,
+        page_changes: list | None = None,
     ) -> bool:
         if len(targets) >= 2:
             if normalize_url(str(targets[0])) == normalize_url(str(targets[1])):
                 return False
         if not allowed.get(primary, False):
             return False
-        if push(
-            {
-                "action_type": primary,
-                "title": title,
-                "description": desc,
-                "target_urls": targets,
-                "expected_outcome": outcome,
-                "evidence_refs": refs,
-            }
-        ):
+        pc = list(page_changes) if page_changes is not None else []
+        body = {
+            "action_type": primary,
+            "title": title,
+            "description": desc,
+            "target_urls": targets,
+            "page_changes": pc,
+            "expected_outcome": outcome,
+            "evidence_refs": refs,
+        }
+        if push(body):
             return True
         if primary == "differentiate" and allowed.get("reposition") and len(targets) >= 1:
+            r1 = targets[1] if len(targets) > 1 else None
             if push(
                 {
                     "action_type": "reposition",
-                    "title": "Adjust intent targeting (fallback)",
+                    "title": "Split buyer intents without merging URLs",
                     "description": (
-                        f"Reposition proof and offers on {targets[0]} "
-                        f"{f'and {targets[1]}' if len(targets) > 1 else ''} to separate buyer intents."
+                        f"Reassign proof blocks on {targets[0]} "
+                        f"{f'and {targets[1]} ' if len(targets) > 1 else ''}"
+                        f"so each page leads with a different scenario and CTA."
                     ),
                     "target_urls": targets[:4],
-                    "expected_outcome": "Clearer intent boundaries without structural merge.",
+                    "page_changes": _fallback_page_changes_reposition_one(targets[0], r1),
+                    "expected_outcome": "Distinct intent signals per URL without structural merge.",
                     "evidence_refs": refs,
                 }
             ):
@@ -717,31 +872,38 @@ def build_fallback_roadmap(payload: dict) -> dict:
         if primary in ("merge", "consolidate", "redirect"):
             if allowed.get("differentiate") and len(targets) >= 2:
                 ddesc = (
-                    f"Differentiate copy and H1 on {targets[0]} versus {targets[1]} so each "
-                    f"URL owns one use case; keep both routes live."
+                    f"Split copy on {targets[0]} and {targets[1]}: each page keeps its route but "
+                    f"carries unique H1, hero, and proof tied to one use case."
                 )
                 if push(
                     {
                         "action_type": "differentiate",
-                        "title": "Clarify positioning between required URLs",
+                        "title": "Separate required URLs with unique copy blocks",
                         "description": ddesc,
                         "target_urls": targets[:4],
+                        "page_changes": _fallback_page_changes_two_urls(targets[0], targets[1]),
                         "expected_outcome": "Lower intent collision without removing business URLs.",
                         "evidence_refs": refs + ["business_context.protected_paths"],
                     }
                 ):
                     return True
             if allowed.get("reposition"):
+                u0, u1 = targets[0], targets[1] if len(targets) > 1 else targets[0]
                 rdesc = (
-                    f"Reposition hero and proof blocks on {targets[0]} to target its primary "
-                    f"buyer; mirror on {targets[1] if len(targets) > 1 else targets[0]} with a distinct angle."
+                    f"Rework hero and proof on {u0} for its primary buyer; "
+                    f"{'do the same on ' + u1 + ' with a different scenario.' if len(targets) > 1 else 'remove mirrored blocks from sibling URLs.'}"
                 )
                 if push(
                     {
                         "action_type": "reposition",
-                        "title": "Adjust intent targeting per URL",
+                        "title": "Rework hero and CTA per URL",
                         "description": rdesc,
                         "target_urls": targets[:4],
+                        "page_changes": (
+                            _fallback_page_changes_two_urls(u0, u1)
+                            if len(targets) > 1 and safe_pair(u0, u1)
+                            else _fallback_page_changes_reposition_one(u0, targets[1] if len(targets) > 1 else None)
+                        ),
                         "expected_outcome": "Embeddings separate while URLs stay published.",
                         "evidence_refs": refs + ["market_context.separate_regions"],
                     }
@@ -758,6 +920,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
                 [u0, u1],
                 "Regional pages stay indexed with clearer intent boundaries.",
                 ["market_context.separate_regions"],
+                page_changes=_fallback_page_changes_regional(u0, u1),
             )
         elif url_requires_preservation(u0, bc) or url_requires_preservation(u1, bc):
             try_action(
@@ -767,6 +930,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
                 [u0, u1],
                 "Core offerings remain live with less cannibalization.",
                 ["business_context.page_roles", "protected_paths"],
+                page_changes=_fallback_page_changes_two_urls(u0, u1),
             )
         else:
             try_action(
@@ -776,6 +940,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
                 [u0, u1],
                 "One ranking URL per intent; internal links stop splitting across twins.",
                 ["cluster dominant_url", "avg_cluster_similarity"],
+                page_changes=[],
             )
     elif urls:
         try_action(
@@ -785,6 +950,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
             [urls[0]],
             "Embeddings diverge enough to exit duplicate clusters on the next crawl.",
             ["content_uniqueness_score"],
+            page_changes=[],
         )
 
     if u0 and u2 and safe_pair(u2, u0) and len(steps) < 5:
@@ -795,6 +961,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
             [u2, u0],
             "Backlinks and crawlers consolidate on one destination.",
             ["roadmap prior step"],
+            page_changes=[],
         )
 
     if not steps:

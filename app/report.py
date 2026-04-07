@@ -299,6 +299,29 @@ def generate_report(
             for u in urls[:16]:
                 parts.append(f"<li>{esc(u)}</li>")
             parts.append("</ul>")
+        page_changes = item.get("page_changes") or []
+        if isinstance(page_changes, list) and page_changes:
+            parts.append(
+                f'<p style="margin: 12px 0 8px 0; font-size: 0.88rem; font-weight: 700;">'
+                f'{esc("Page-level changes")}</p>'
+            )
+            for ch in page_changes:
+                if not isinstance(ch, dict):
+                    continue
+                cu = ch.get("url", "")
+                cty = ch.get("change_type", "")
+                cinstr = ch.get("instruction", "")
+                parts.append(
+                    '<div style="margin: 0 0 10px 0; padding: 10px 12px; background: #fff; '
+                    'border: 1px solid #dee2e6; border-radius: 6px;">'
+                    f'<p style="margin: 0 0 6px 0; font-size: 0.85rem;"><strong>{esc("URL:")}</strong> '
+                    f"{esc(str(cu))}</p>"
+                    f'<p style="margin: 0 0 6px 0; font-size: 0.85rem;"><strong>{esc("change_type:")}</strong> '
+                    f"{esc(str(cty))}</p>"
+                    f'<p style="margin: 0; font-size: 0.88rem;"><strong>{esc("instruction:")}</strong> '
+                    f"{esc(str(cinstr))}</p>"
+                    "</div>"
+                )
         if evrefs:
             parts.append(
                 f'<p style="margin: 8px 0 0 0; font-size: 0.82rem; color: #495057;">'
