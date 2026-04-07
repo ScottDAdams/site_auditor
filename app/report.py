@@ -83,7 +83,25 @@ def _key_issues_lines(grouped_issues):
     return lines
 
 
-def generate_report(findings, grouped_issues, all_pages, clusters, ai_readiness):
+def _top_recommended_actions_lines(top_actions):
+    lines = ["TOP RECOMMENDED ACTIONS", ""]
+    if not top_actions:
+        lines.append("(No top actions generated from grouped issues.)")
+        lines.append("")
+        return lines
+
+    for i, action in enumerate(top_actions, start=1):
+        lines.append(f"{i}. {action['title']}")
+        for d in action.get("details", []):
+            lines.append(f"   - {d}")
+        lines.append("")
+
+    return lines
+
+
+def generate_report(
+    findings, grouped_issues, top_actions, all_pages, clusters, ai_readiness
+):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
     low = sum(1 for f in findings if f.get("priority") == "LOW")
@@ -97,6 +115,7 @@ def generate_report(findings, grouped_issues, all_pages, clusters, ai_readiness)
     ]
     lines.extend(_executive_insights_lines(findings))
     lines.extend(_key_issues_lines(grouped_issues))
+    lines.extend(_top_recommended_actions_lines(top_actions))
     lines.extend(
         [
         "SUMMARY",

@@ -349,3 +349,48 @@ def group_findings(findings):
             )
 
     return grouped_issues
+
+
+def generate_top_actions(grouped_issues):
+    actions = []
+
+    for issue in grouped_issues:
+        title = issue["title"]
+
+        if title == "Product Positioning Overlap":
+            actions.append(
+                {
+                    "title": "Clarify product differentiation across policy pages",
+                    "details": [
+                        "Define clear distinctions between plans (coverage, audience, use case)",
+                        "Update page copy to emphasize unique value of each plan",
+                        "Reduce overlap in messaging across product pages",
+                    ],
+                }
+            )
+
+        elif title == "Cross-Market Content Duplication":
+            actions.append(
+                {
+                    "title": "Improve AU vs NZ content localization",
+                    "details": [
+                        "Introduce region-specific messaging and positioning",
+                        "Adjust examples, benefits, and terminology per market",
+                        "Avoid identical copy across regional sites",
+                    ],
+                }
+            )
+
+        elif title == "Informational Content Overlap":
+            actions.append(
+                {
+                    "title": "Consolidate overlapping informational content",
+                    "details": [
+                        "Merge or differentiate pages targeting similar topics",
+                        "Ensure each page has a distinct keyword and intent",
+                        "Reduce internal competition between guides",
+                    ],
+                }
+            )
+
+    return actions[:3]
