@@ -353,6 +353,7 @@ def group_findings(findings):
 
 def generate_top_actions(grouped_issues):
     actions = []
+    added = set()
 
     for issue in grouped_issues:
         title = issue["title"]
@@ -368,6 +369,7 @@ def generate_top_actions(grouped_issues):
                     ],
                 }
             )
+            added.add("product")
 
         elif title == "Cross-Market Content Duplication":
             actions.append(
@@ -380,6 +382,7 @@ def generate_top_actions(grouped_issues):
                     ],
                 }
             )
+            added.add("cross_market")
 
         elif title == "Informational Content Overlap":
             actions.append(
@@ -392,5 +395,42 @@ def generate_top_actions(grouped_issues):
                     ],
                 }
             )
+            added.add("informational")
+
+    if "cross_market" not in added:
+        actions.append(
+            {
+                "title": "Improve AU vs NZ content localization",
+                "details": [
+                    "Introduce region-specific messaging and positioning",
+                    "Adjust benefits and terminology per market",
+                    "Avoid identical copy across regional sites",
+                ],
+            }
+        )
+
+    if "product" not in added:
+        actions.append(
+            {
+                "title": "Clarify product structure and differentiation",
+                "details": [
+                    "Ensure each product page targets a distinct audience or use case",
+                    "Reduce overlap between similar offerings",
+                    "Improve clarity in plan comparisons",
+                ],
+            }
+        )
+
+    if "informational" not in added:
+        actions.append(
+            {
+                "title": "Consolidate overlapping site structure",
+                "details": [
+                    "Merge or differentiate pages that compete for the same intent",
+                    "Clarify internal linking and topic ownership",
+                    "Reduce redundant content paths",
+                ],
+            }
+        )
 
     return actions[:3]
