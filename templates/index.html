@@ -1,32 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8" />
     <title>Site Auditor</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
 </head>
 <body>
+    <p>Status: {{ state.status }}</p>
+    <p>Clusters found: {{ state.clusters|length }}</p>
+
     <h1>Site Auditor</h1>
 
     <form action="/run-audit" method="post">
-        <input type="text" name="sites" placeholder="example.com, example.co.nz" style="width:400px;" />
+        <input type="text" name="sites" placeholder="https://example.com, https://example.co.nz" style="width:400px;" />
         <button type="submit">Run Audit</button>
     </form>
 
     <h2>Status: {{ state.status }}</h2>
 
-    {% if state.clusters %}
-        <h3>Duplicate Clusters</h3>
-        <ul>
-        {% for cluster in state.clusters %}
-            <li>
-                Similarity: {{ cluster.similarity }}
-                <ul>
-                    {% for page in cluster.pages %}
-                        <li>{{ page.url }}</li>
-                    {% endfor %}
-                </ul>
-            </li>
-        {% endfor %}
-        </ul>
+    {% if state.clusters and state.clusters|length > 0 %}
+    <h3>Duplicate Clusters</h3>
+    <ul>
+    {% for cluster in state.clusters %}
+        <li>
+            Avg Similarity: {{ cluster.avg_similarity }}
+            <ul>
+                {% for page in cluster.pages %}
+                    <li>{{ page.url }}</li>
+                {% endfor %}
+            </ul>
+        </li>
+    {% endfor %}
+    </ul>
     {% endif %}
 
     {% if state.report %}

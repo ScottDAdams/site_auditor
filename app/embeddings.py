@@ -1,9 +1,14 @@
+import os
+
 from openai import OpenAI
 import numpy as np
 
 def generate_embeddings(pages):
     if not pages:
         return []
+
+    if os.getenv("OPENAI_API_KEY"):
+        print("Using OpenAI embeddings")
 
     client = OpenAI()
     texts = [p["content"][:2000] for p in pages]
