@@ -112,6 +112,8 @@ def generate_report(
     all_pages,
     clusters,
     ai_readiness,
+    ai_insights="",
+    execution_roadmap="",
 ):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
@@ -141,6 +143,42 @@ def generate_report(
     for b in bullets:
         parts.append(f"<li style=\"margin-bottom: 8px;\">{esc(b)}</li>")
     parts.append("</ul></div>")
+
+    # Strategic interpretation (AI)
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("Strategic interpretation")}</h2>'
+    )
+    parts.append(
+        '<div style="border-left: 4px solid #6f42c1; padding: 14px 16px; '
+        'background: #faf8ff; border-radius: 0 8px 8px 0;">'
+    )
+    parts.append(
+        f'<div style="white-space: pre-wrap; font-size: 0.98rem; color: #2d2d2d;">'
+        f"{esc(ai_insights)}</div>"
+    )
+    parts.append("</div></div>")
+
+    # 30-day execution plan (AI)
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'{esc("30-day priority roadmap")}</h2>'
+    )
+    parts.append(
+        '<p style="margin: 0 0 12px 0; color: #5c6370; font-size: 0.95rem;">'
+        f"{esc('What to execute in the next 30 days — sequenced by impact.')}</p>"
+    )
+    parts.append(
+        '<div style="border-left: 4px solid #198754; padding: 14px 16px; '
+        'background: #f6fff9; border-radius: 0 8px 8px 0;">'
+    )
+    parts.append(
+        f'<div style="white-space: pre-wrap; font-size: 0.98rem; color: #2d2d2d;">'
+        f"{esc(execution_roadmap)}</div>"
+    )
+    parts.append("</div></div>")
 
     # Content health score
     parts.append(f"<div {_SECTION}>")

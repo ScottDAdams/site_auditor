@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,6 +23,12 @@ from app.analyzer import (
     group_findings,
     is_valid_cluster,
     score_label,
+)
+from app.ai_insights import (
+    LLMClient,
+    compute_audit_metrics,
+    generate_ai_insights,
+    generate_execution_roadmap,
 )
 from app.report import generate_report
 
@@ -129,6 +136,62 @@ def run_audit(sites: str = Form(...)):
         all_findings, grouped_issues, clusters, ai_readiness
     )
     label = score_label(score)
+
+    metrics = compute_audit_metrics(pages, clusters, all_findings)
+    analysis_payload = {
+        "summary": {
+            "pages": len(pages),
+            "clusters": len(clusters),
+            "high_issues": sum(
+                1 for f in all_findings if f.get("priority") == "HIGH"
+            ),
+            "medium_issues": sum(
+                1 for f in all_findings if f.get("priority") == "MEDIUM"
+            ),
+        },
+        "metrics": {
+            "overlap_rate": metrics["overlap_rate"],
+            "avg_cluster_similarity": metrics["avg_cluster_similarity"],
+            "content_uniqueness_score": metrics["content_uniqueness_score"],
+        },
+        "grouped_issues": grouped_issues,
+        "top_actions": top_actions,
+        "ai_readiness": ai_readiness,
+        "clusters": [
+            {
+                "similarity": c["avg_similarity"],
+                "pages": [p["url"] for p in c["pages"][:3]],
+            }
+            for c in clusters[:5]
+        ],
+    }
+
+    ai_insights = ""
+    execution_roadmap = ""
+    if os.getenv("OPENAI_API_KEY"):
+        llm = LLMClient()
+        try:
+            ai_insights = generate_ai_insights(analysis_payload, llm)
+        except Exception as exc:
+            ai_insights = (
+                "Strategic interpretation could not be generated. "
+                f"Error: {exc}"
+            )
+        try:
+            execution_roadmap = generate_execution_roadmap(analysis_payload, llm)
+        except Exception as exc:
+            execution_roadmap = (
+                "30-day execution plan could not be generated. "
+                f"Error: {exc}"
+            )
+    else:
+        msg = (
+            "Set OPENAI_API_KEY to enable AI strategic interpretation "
+            "and the 30-day execution plan for this report."
+        )
+        ai_insights = msg
+        execution_roadmap = msg
+
     report = generate_report(
         all_findings,
         grouped_issues,
@@ -138,6 +201,8 @@ def run_audit(sites: str = Form(...)):
         pages,
         clusters,
         ai_readiness,
+        ai_insights=ai_insights,
+        execution_roadmap=execution_roadmap,
     )
 
     STATE.update({
