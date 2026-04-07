@@ -123,10 +123,12 @@ def run_audit(sites: str = Form(...)):
 
     top_actions = generate_top_actions(grouped_issues)
 
-    score = calculate_content_health_score(all_findings, grouped_issues, clusters)
-    label = score_label(score)
-
     ai_readiness = compute_ai_readiness(pages)
+
+    score = calculate_content_health_score(
+        all_findings, grouped_issues, clusters, ai_readiness
+    )
+    label = score_label(score)
     report = generate_report(
         all_findings,
         grouped_issues,

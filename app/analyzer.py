@@ -78,14 +78,22 @@ def compute_ai_readiness(all_pages):
             "has_guide_content": False,
             "content_depth_ok": False,
             "average_word_count": 0.0,
+            "faq_present": False,
+            "avg_words": 0.0,
+            "content_depth": "LOW",
         }
 
     avg_wc = sum(p.get("word_count") or 0 for p in all_pages) / len(all_pages)
+    faq_present = any(p.get("type") == "faq" for p in all_pages)
+    depth_ok = avg_wc > 500
     return {
-        "has_faq_content": any(p.get("type") == "faq" for p in all_pages),
+        "has_faq_content": faq_present,
         "has_guide_content": any(p.get("type") == "guide" for p in all_pages),
-        "content_depth_ok": avg_wc > 500,
+        "content_depth_ok": depth_ok,
         "average_word_count": avg_wc,
+        "faq_present": faq_present,
+        "avg_words": avg_wc,
+        "content_depth": "GOOD" if depth_ok else "LOW",
     }
 
 
@@ -436,20 +444,29 @@ def generate_top_actions(grouped_issues):
     return actions[:3]
 
 
-def calculate_content_health_score(findings, grouped_issues, clusters):
-    score = 100
+def calculate_content_health_score(findings, grouped_issues, clusters, ai_readiness):
+    score = 70
 
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     medium = sum(1 for f in findings if f.get("priority") == "MEDIUM")
 
-    score -= high * 8
-    score -= medium * 4
+    score -= high * 6
+    score -= medium * 3
 
     if len(clusters) > 5:
-        score -= min(10, len(clusters))
+        score -= min(8, len(clusters))
 
     if len(grouped_issues) == 1:
-        score -= 5
+        score -= 4
+
+    if ai_readiness.get("faq_present"):
+        score += 5
+
+    if ai_readiness.get("avg_words", 0) > 500:
+        score += 5
+
+    if ai_readiness.get("content_depth") == "GOOD":
+        score += 5
 
     return max(0, min(100, score))
 

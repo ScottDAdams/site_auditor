@@ -35,8 +35,8 @@
     {% endif %}
 
     {% if state.report %}
-        <h3>Report</h3>
-        <pre>{{ state.report }}</pre>
+        <h2>Report</h2>
+        <div class="audit-report">{{ state.report | safe }}</div>
     {% endif %}
 </body>
 </html>
