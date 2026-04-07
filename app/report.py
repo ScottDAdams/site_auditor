@@ -1,3 +1,34 @@
+def _executive_insights_lines(findings):
+    lines = ["EXECUTIVE INSIGHTS", ""]
+    high_n = sum(1 for f in findings if f.get("priority") == "HIGH")
+    med_n = sum(1 for f in findings if f.get("priority") == "MEDIUM")
+    any_cross = any(f.get("cross_market") for f in findings)
+    overlap = [f for f in findings if f.get("type") == "topic_overlap"]
+    product_positioning = any(
+        "Product pages overlap" in f.get("action", "") for f in overlap
+    )
+
+    lines.append(f"- {high_n} high-priority content conflicts identified")
+
+    if any_cross:
+        lines.append(
+            "- Cross-market duplication is present between AU and NZ sites"
+        )
+
+    if product_positioning:
+        lines.append(
+            "- Product positioning overlap detected in policy pages"
+        )
+
+    if high_n > 0 or med_n > 0 or len(findings) > 0:
+        lines.append(
+            "- Content differentiation opportunities exist across key pages"
+        )
+
+    lines.append("")
+    return lines
+
+
 def generate_report(findings, all_pages, clusters, ai_readiness):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
@@ -9,6 +40,10 @@ def generate_report(findings, all_pages, clusters, ai_readiness):
     lines = [
         "SITE AUDIT REPORT",
         "",
+    ]
+    lines.extend(_executive_insights_lines(findings))
+    lines.extend(
+        [
         "SUMMARY",
         "",
         f"Pages analyzed: {len(all_pages)}",
@@ -27,7 +62,8 @@ def generate_report(findings, all_pages, clusters, ai_readiness):
         "",
         "FINDINGS",
         "",
-    ]
+        ]
+    )
 
     for f in dup_findings:
         label = (f.get("type") or "unknown").upper()

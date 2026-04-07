@@ -1,4 +1,23 @@
+from urllib.parse import urlparse
+
 from sklearn.metrics.pairwise import cosine_similarity
+
+
+def is_homepage(url: str) -> bool:
+    path = urlparse(url).path
+    return path in ["", "/"]
+
+
+def is_structural_match(url1: str, url2: str) -> bool:
+    u1, u2 = url1.lower(), url2.lower()
+    return (
+        "/about-us" in u1
+        and "/about-us" in u2
+        or "/testimonials" in u1
+        and "/testimonials" in u2
+        or "/our-awards" in u1
+        and "/our-awards" in u2
+    )
 
 DUPLICATION_RULES = {
     "guide": {
@@ -123,11 +142,15 @@ def detect_topic_overlap(pages, embeddings, clusters, threshold=0.85):
             url_to_cluster[p["url"]] = idx
 
     overlaps = []
+    seen_pairs = set()
 
     for i in range(len(pages)):
         for j in range(i + 1, len(pages)):
             p1 = pages[i]
             p2 = pages[j]
+
+            if is_homepage(p1["url"]) or is_homepage(p2["url"]):
+                continue
 
             cid1 = url_to_cluster.get(p1["url"])
             cid2 = url_to_cluster.get(p2["url"])
@@ -139,6 +162,11 @@ def detect_topic_overlap(pages, embeddings, clusters, threshold=0.85):
             )
 
             if sim >= threshold:
+                key = tuple(sorted([p1["url"].rstrip("/"), p2["url"].rstrip("/")]))
+                if key in seen_pairs:
+                    continue
+                seen_pairs.add(key)
+
                 overlaps.append(
                     {
                         "url_1": p1["url"],
@@ -157,19 +185,41 @@ def detect_topic_overlap(pages, embeddings, clusters, threshold=0.85):
 
 def analyze_overlaps(overlaps):
     findings = []
+    seen_pairs = set()
 
     for o in overlaps:
-        cross_market = o["domain_1"] != o["domain_2"]
+        key = tuple(sorted([o["url_1"].rstrip("/"), o["url_2"].rstrip("/")]))
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
 
-        if "guide" in [o["type_1"], o["type_2"]]:
+        if is_structural_match(o["url_1"], o["url_2"]):
+            continue
+
+        cross_market = o["domain_1"] != o["domain_2"]
+        types = [o["type_1"], o["type_2"]]
+
+        if "guide" in types:
             priority = "HIGH"
-            action = "Consolidate or clearly differentiate these pages"
+            action = (
+                "These pages compete for the same informational intent. "
+                "Consolidate or differentiate."
+            )
+        elif types.count("product") == 2:
+            priority = "HIGH"
+            action = (
+                "Product pages overlap in positioning. Clarify differences in "
+                "coverage, audience, or use case."
+            )
+        elif cross_market and o["similarity"] > 0.90:
+            priority = "HIGH"
+            action = (
+                "Cross-market pages are too similar. Localize content for AU vs "
+                "NZ audiences."
+            )
         else:
             priority = "MEDIUM"
             action = "Review for overlapping intent"
-
-        if cross_market:
-            action += " with AU vs NZ positioning differences"
 
         findings.append(
             {
@@ -182,4 +232,7 @@ def analyze_overlaps(overlaps):
             }
         )
 
-    return findings
+    findings = sorted(
+        findings, key=lambda x: x["priority"] == "HIGH", reverse=True
+    )
+    return findings[:8]
