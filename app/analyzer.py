@@ -19,6 +19,93 @@ def is_structural_match(url1: str, url2: str) -> bool:
         and "/our-awards" in u2
     )
 
+
+DUPLICATION_TYPES = [
+    "Exact duplication",
+    "Structural duplication",
+    "Intent overlap",
+    "Cross-market reuse",
+    "Navigational redundancy",
+]
+
+
+def _resolve_content_type(types: set) -> str:
+    """Pick a single page-type label for rules; never return 'mixed'."""
+    if len(types) == 1:
+        return next(iter(types))
+    if not types:
+        return "other"
+    order = ["guide", "product", "support", "faq", "brand", "other"]
+    for t in order:
+        if t in types:
+            return t
+    return "other"
+
+
+def classify_duplication(cluster) -> str:
+    """
+    Heuristic taxonomy for cluster-level duplication.
+    Always returns one of DUPLICATION_TYPES.
+    """
+    pages = cluster.get("pages") or []
+    if len(pages) < 2:
+        return "Structural duplication"
+
+    avg_sim = float(cluster.get("avg_similarity", 0))
+    domains = {p.get("domain") for p in pages if p.get("domain")}
+    urls = [p["url"] for p in pages]
+    paths = []
+    for p in pages:
+        path = p.get("path")
+        if path is None:
+            path = urlparse(p["url"]).path
+        paths.append(path or "")
+
+    if len(domains) > 1:
+        return "Cross-market reuse"
+
+    for i, u1 in enumerate(urls):
+        for u2 in urls[i + 1 :]:
+            if is_structural_match(u1, u2):
+                return "Navigational redundancy"
+
+    if avg_sim >= 0.94:
+        return "Exact duplication"
+
+    stripped = [p.strip("/") for p in paths if p is not None]
+    if len(set(paths)) >= 2 and stripped:
+        first_segments = {s.split("/")[0] for s in stripped if s}
+        if len(first_segments) == 1:
+            return "Structural duplication"
+
+    if avg_sim >= 0.89:
+        return "Intent overlap"
+
+    return "Structural duplication"
+
+
+def classify_topic_overlap(o: dict) -> str:
+    """Taxonomy for cross-cluster / pair overlap signals."""
+    cross = o.get("domain_1") != o.get("domain_2")
+    sim = float(o.get("similarity", 0))
+    u1, u2 = o.get("url_1", ""), o.get("url_2", "")
+
+    if cross:
+        return "Cross-market reuse"
+    if is_structural_match(u1, u2):
+        return "Navigational redundancy"
+    if sim >= 0.94:
+        return "Exact duplication"
+    t1, t2 = o.get("type_1"), o.get("type_2")
+    if t1 == "guide" and t2 == "guide":
+        return "Intent overlap"
+    if "product" in (t1, t2):
+        return "Intent overlap"
+    if sim >= 0.88:
+        return "Intent overlap"
+    return "Structural duplication"
+
+
 DUPLICATION_RULES = {
     "guide": {
         "priority": "HIGH",
@@ -108,14 +195,10 @@ def analyze_clusters(clusters):
         types = set(p.get("type") for p in pages if p.get("type"))
         domains = set(p.get("domain") for p in pages if p.get("domain"))
 
-        if len(types) == 1:
-            primary_type = next(iter(types))
-        elif len(types) == 0:
-            primary_type = "other"
-        else:
-            primary_type = "mixed"
+        primary_type = _resolve_content_type(types)
 
         cross_market = len(domains) > 1
+        dup_type = classify_duplication(c)
 
         if primary_type in DUPLICATION_RULES:
             rule = DUPLICATION_RULES[primary_type]
@@ -123,7 +206,7 @@ def analyze_clusters(clusters):
             action = rule["action"]
         else:
             priority = "MEDIUM"
-            action = "Mixed content types require manual review"
+            action = "Manual review required"
 
         if cross_market and primary_type == "guide":
             priority = "HIGH"
@@ -137,6 +220,7 @@ def analyze_clusters(clusters):
                 "cross_market": cross_market,
                 "avg_similarity": c["avg_similarity"],
                 "pages": [p["url"] for p in pages],
+                "duplication_type": dup_type,
             }
         )
 
@@ -254,6 +338,7 @@ def analyze_overlaps(overlaps):
             action = "Review for overlapping intent"
 
         impact = get_impact(types, cross_market)
+        dup_type = classify_topic_overlap(o)
 
         findings.append(
             {
@@ -265,6 +350,7 @@ def analyze_overlaps(overlaps):
                 "pages": [o["url_1"], o["url_2"]],
                 "cross_market": cross_market,
                 "overlap_types": types,
+                "duplication_type": dup_type,
             }
         )
 
@@ -363,91 +449,6 @@ def group_findings(findings):
             )
 
     return grouped_issues
-
-
-def generate_top_actions(grouped_issues):
-    actions = []
-    added = set()
-
-    for issue in grouped_issues:
-        title = issue["title"]
-
-        if title == "Product Positioning Overlap":
-            actions.append(
-                {
-                    "title": "Clarify product differentiation across policy pages",
-                    "details": [
-                        "Define clear distinctions between plans (coverage, audience, use case)",
-                        "Update page copy to emphasize unique value of each plan",
-                        "Reduce overlap in messaging across product pages",
-                    ],
-                }
-            )
-            added.add("product")
-
-        elif title == "Cross-Market Content Duplication":
-            actions.append(
-                {
-                    "title": "Improve AU vs NZ content localization",
-                    "details": [
-                        "Introduce region-specific messaging and positioning",
-                        "Adjust examples, benefits, and terminology per market",
-                        "Avoid identical copy across regional sites",
-                    ],
-                }
-            )
-            added.add("cross_market")
-
-        elif title == "Informational Content Overlap":
-            actions.append(
-                {
-                    "title": "Consolidate overlapping informational content",
-                    "details": [
-                        "Merge or differentiate pages targeting similar topics",
-                        "Ensure each page has a distinct keyword and intent",
-                        "Reduce internal competition between guides",
-                    ],
-                }
-            )
-            added.add("informational")
-
-    if "cross_market" not in added:
-        actions.append(
-            {
-                "title": "Improve AU vs NZ content localization",
-                "details": [
-                    "Introduce region-specific messaging and positioning",
-                    "Adjust benefits and terminology per market",
-                    "Avoid identical copy across regional sites",
-                ],
-            }
-        )
-
-    if "product" not in added:
-        actions.append(
-            {
-                "title": "Clarify product structure and differentiation",
-                "details": [
-                    "Ensure each product page targets a distinct audience or use case",
-                    "Reduce overlap between similar offerings",
-                    "Improve clarity in plan comparisons",
-                ],
-            }
-        )
-
-    if "informational" not in added:
-        actions.append(
-            {
-                "title": "Consolidate overlapping site structure",
-                "details": [
-                    "Merge or differentiate pages that compete for the same intent",
-                    "Clarify internal linking and topic ownership",
-                    "Reduce redundant content paths",
-                ],
-            }
-        )
-
-    return actions[:3]
 
 
 def calculate_content_health_score(_findings, grouped_issues, clusters, ai_readiness):

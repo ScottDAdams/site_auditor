@@ -6,7 +6,7 @@ _WRAPPER = (
     'background: #f5f6f8; border-radius: 12px;"'
 )
 _SECTION = (
-    'style="margin-bottom: 36px; padding: 22px 26px; border-radius: 10px; '
+    'style="margin-bottom: 32px; padding: 22px 26px; border-radius: 10px; '
     "background: #fafbfd; border: 1px solid #e4e7ec; "
     'box-shadow: 0 1px 3px rgba(0,0,0,0.04);"'
 )
@@ -20,78 +20,43 @@ _FINDING_CARD = (
 )
 
 
-def _primary_issue_display(title: str) -> str:
-    mapping = {
-        "Product Positioning Overlap": "Product positioning overlap",
-        "Cross-Market Content Duplication": "Cross-market duplication",
-        "Informational Content Overlap": "Overlapping informational content",
-        "General Content Overlap": "Structural inefficiencies",
-    }
-    return mapping.get(title, title)
-
-
-def _executive_insights_bullets(findings):
-    bullets = []
-    high_n = sum(1 for f in findings if f.get("priority") == "HIGH")
-    med_n = sum(1 for f in findings if f.get("priority") == "MEDIUM")
-    overlap = [f for f in findings if f.get("type") == "topic_overlap"]
-    dup_findings = [f for f in findings if f.get("type") != "topic_overlap"]
-    any_cross = any(f.get("cross_market") for f in findings)
-
-    product_conflict_high = any(
-        f.get("priority") == "HIGH"
-        and "product" in (f.get("overlap_types") or [])
-        for f in overlap
+def render_methodology() -> str:
+    esc = escape
+    items = [
+        (
+            "Exact duplication",
+            "Identical or near-identical content across URLs (high embedding similarity).",
+        ),
+        (
+            "Intent overlap",
+            "Different pages competing for the same user goal or search intent.",
+        ),
+        (
+            "Structural duplication",
+            "Same page pattern or section with minimal substantive differentiation.",
+        ),
+        (
+            "Cross-market reuse",
+            "Content reused across regions without sufficient localization.",
+        ),
+        (
+            "Navigational redundancy",
+            "Parallel or competing entry points (e.g. mirrored structural paths).",
+        ),
+    ]
+    rows = "".join(
+        f"<li style=\"margin-bottom: 10px;\"><strong>{esc(t)}</strong> — {esc(d)}</li>"
+        for t, d in items
     )
-    product_positioning_theme = any(
-        "product positioning" in (f.get("impact") or "").lower() for f in overlap
+    return (
+        f"<div {_SECTION}>"
+        f'<h2 style="margin: 0 0 12px 0; font-size: 1.15rem;">'
+        f'{esc("How to read this report")}</h2>'
+        f'<p style="margin: 0 0 12px 0; color: #5c6370;">'
+        f"{esc('Duplication types used in this audit:')}</p>"
+        f'<ul style="margin: 0; padding-left: 1.2em;">{rows}</ul>'
+        f"</div>"
     )
-    cluster_product_high = any(
-        f.get("type") == "product" and f.get("priority") == "HIGH"
-        for f in dup_findings
-    )
-    product_executive = (
-        product_conflict_high
-        or product_positioning_theme
-        or cluster_product_high
-    )
-
-    if product_executive:
-        bullets.append(
-            "Product positioning overlap detected, which may impact conversion "
-            "and customer clarity"
-        )
-
-    if high_n > 0 and not product_executive:
-        if any("SEO authority" in f.get("impact", "") for f in overlap):
-            bullets.append(
-                f"{high_n} high-priority content conflicts impacting SEO "
-                "authority and AI visibility"
-            )
-        else:
-            bullets.append(
-                f"{high_n} high-priority content conflicts impacting site "
-                "clarity and strategic positioning"
-            )
-
-    if any_cross:
-        bullets.append(
-            "Cross-market duplication reduces localization effectiveness "
-            "between AU and NZ"
-        )
-
-    if high_n == 0 and (med_n > 0 or len(findings) > 0):
-        bullets.append(
-            "Content patterns suggest opportunities to sharpen differentiation "
-            "across key pages"
-        )
-
-    if not bullets:
-        bullets.append(
-            "No major conflicts flagged; continue monitoring content drift over time"
-        )
-
-    return bullets
 
 
 def _score_color(label: str) -> str:
@@ -103,17 +68,64 @@ def _score_color(label: str) -> str:
     }.get(label, "#d9534f")
 
 
+def _metric_cards(esc, metrics: dict) -> str:
+    cards = [
+        ("Overlap rate", metrics.get("overlap_rate"), "Share of pages in an overlap signal"),
+        (
+            "Avg cluster similarity",
+            metrics.get("avg_cluster_similarity"),
+            "Mean similarity within duplicate clusters",
+        ),
+        (
+            "Content uniqueness",
+            metrics.get("content_uniqueness_score"),
+            "1 − cluster similarity (higher = more distinct)",
+        ),
+    ]
+    inner = []
+    for title, val, hint in cards:
+        v = val if val is not None else "—"
+        inner.append(
+            '<div style="flex: 1; min-width: 140px; padding: 14px 16px; background: #fff; '
+            'border: 1px solid #e4e7ec; border-radius: 8px;">'
+            f'<p style="margin: 0 0 6px 0; font-size: 0.75rem; text-transform: uppercase; '
+            f'letter-spacing: 0.04em; color: #6c757d;">{esc(title)}</p>'
+            f'<p style="margin: 0 0 6px 0; font-size: 1.35rem; font-weight: 700; color: #1a1a1a;">'
+            f"{esc(str(v))}</p>"
+            f'<p style="margin: 0; font-size: 0.82rem; color: #868e96;">{esc(hint)}</p>'
+            "</div>"
+        )
+    return (
+        '<div style="display: flex; flex-wrap: wrap; gap: 14px;">'
+        + "".join(inner)
+        + "</div>"
+    )
+
+
+def _core_block(esc, heading: str, body: str) -> str:
+    if not (body or "").strip():
+        return ""
+    return (
+        '<div style="margin-bottom: 16px; padding: 14px 16px; background: #ffffff; '
+        'border-radius: 8px; border: 1px solid #e8eaed;">'
+        f'<p style="margin: 0 0 8px 0; font-size: 0.72rem; text-transform: uppercase; '
+        f'letter-spacing: 0.06em; color: #868e96;">{esc(heading)}</p>'
+        f'<p style="margin: 0; font-size: 0.98rem;">{esc(body.strip())}</p>'
+        "</div>"
+    )
+
+
 def generate_report(
     findings,
     grouped_issues,
-    top_actions,
     score,
     label,
     all_pages,
     clusters,
     ai_readiness,
-    ai_insights="",
-    execution_roadmap="",
+    report_metrics: dict,
+    ai_insights: dict,
+    execution_roadmap: dict,
 ):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
@@ -124,165 +136,162 @@ def generate_report(
 
     esc = escape
     score_color = _score_color(label)
+    ai = ai_insights or {}
+    rm = execution_roadmap or {}
+    metrics = report_metrics or {}
 
     parts = [
         f"<div {_WRAPPER}>",
-        f'<h1 style="margin: 0 0 8px 0; font-size: 1.75rem;">{esc("Site Audit Report")}</h1>',
-        f'<p style="margin: 0 0 24px 0; color: #5c6370; font-size: 0.95rem;">'
-        f"{esc('Structured analysis — grouped issues, not raw duplicate counts.')}</p>",
+        '<h1 style="margin: 0 0 6px 0; font-size: 1.85rem; font-weight: 800;">'
+        f'{esc("Site audit")}</h1>',
+        '<p style="margin: 0 0 20px 0; color: #5c6370; font-size: 0.95rem;">'
+        f"{esc('POV backed by URLs and metrics — execution sequenced below.')}</p>",
     ]
 
-    # Executive insights
-    bullets = _executive_insights_bullets(findings)
-    parts.append(f"<div {_SECTION}>")
-    parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Executive insights")}</h2>'
-    )
-    parts.append("<ul style=\"margin: 0; padding-left: 1.25em;\">")
-    for b in bullets:
-        parts.append(f"<li style=\"margin-bottom: 8px;\">{esc(b)}</li>")
-    parts.append("</ul></div>")
+    parts.append(render_methodology())
 
-    # Strategic interpretation (AI)
-    parts.append(f"<div {_SECTION}>")
+    # Verdict
+    verdict = ai.get("verdict") or "No verdict available."
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Strategic interpretation")}</h2>'
+        '<div style="margin-bottom: 28px; padding: 22px 26px; background: #1a1d24; '
+        'color: #f8f9fa; border-radius: 10px;">'
+        f'<p style="margin: 0 0 8px 0; font-size: 0.7rem; text-transform: uppercase; '
+        f'letter-spacing: 0.12em; color: #adb5bd;">{esc("Verdict")}</p>'
+        f'<p style="margin: 0; font-size: 1.35rem; font-weight: 700; line-height: 1.35;">'
+        f"{esc(verdict)}</p>"
+        "</div>"
     )
-    parts.append(
-        '<div style="border-left: 4px solid #6f42c1; padding: 14px 16px; '
-        'background: #faf8ff; border-radius: 0 8px 8px 0;">'
-    )
-    parts.append(
-        f'<div style="white-space: pre-wrap; font-size: 0.98rem; color: #2d2d2d;">'
-        f"{esc(ai_insights)}</div>"
-    )
-    parts.append("</div></div>")
 
-    # 30-day execution plan (AI)
+    # Key metrics
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("30-day priority roadmap")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Key metrics")}</h2>'
+    )
+    parts.append(_metric_cards(esc, metrics))
+    parts.append("</div>")
+
+    # Core analysis
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 16px 0; font-size: 1.2rem;">{esc("Core analysis")}</h2>'
+    )
+    parts.append(_core_block(esc, "Core problem", ai.get("core_problem", "")))
+    parts.append(_core_block(esc, "Recommendation", ai.get("recommendation", "")))
+    parts.append(_core_block(esc, "Business impact", ai.get("business_impact", "")))
+    parts.append(_core_block(esc, "If no action is taken", ai.get("inaction_risk", "")))
+    parts.append("</div>")
+
+    # 30-day roadmap
+    parts.append(f"<div {_SECTION}>")
+    parts.append(
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
+        f'{esc("30-day execution plan")}</h2>'
     )
     parts.append(
-        '<p style="margin: 0 0 12px 0; color: #5c6370; font-size: 0.95rem;">'
-        f"{esc('What to execute in the next 30 days — sequenced by impact.')}</p>"
+        '<p style="margin: 0 0 16px 0; color: #5c6370; font-size: 0.92rem;">'
+        f"{esc('Ordered by impact — concrete steps only.')}</p>"
     )
+    for item in rm.get("roadmap") or []:
+        if not isinstance(item, dict):
+            continue
+        step = item.get("step", "")
+        title = item.get("title", "")
+        desc = item.get("description", "")
+        impact = item.get("expected_impact", "")
+        urls = item.get("affected_urls") or []
+        parts.append(
+            '<div style="border-left: 4px solid #198754; padding: 14px 16px; margin-bottom: 12px; '
+            'background: #f6fff9; border-radius: 0 8px 8px 0;">'
+            f'<p style="margin: 0 0 6px 0; font-weight: 700;">'
+            f'{esc(str(step))}. {esc(title)}</p>'
+            f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">{esc(desc)}</p>'
+            f'<p style="margin: 0 0 8px 0; font-size: 0.88rem; color: #495057;">'
+            f"<strong>{esc('Expected impact:')}</strong> {esc(impact)}</p>"
+        )
+        if urls:
+            parts.append(f'<p style="margin: 0; font-size: 0.85rem;"><strong>{esc("URLs:")}</strong></p><ul>')
+            for u in urls[:12]:
+                parts.append(f"<li>{esc(u)}</li>")
+            parts.append("</ul>")
+        parts.append("</div>")
+    parts.append("</div>")
+
+    # Supporting evidence
+    parts.append(f"<div {_SECTION}>")
     parts.append(
-        '<div style="border-left: 4px solid #198754; padding: 14px 16px; '
-        'background: #f6fff9; border-radius: 0 8px 8px 0;">'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
+        f'{esc("Supporting evidence")}</h2>'
     )
-    parts.append(
-        f'<div style="white-space: pre-wrap; font-size: 0.98rem; color: #2d2d2d;">'
-        f"{esc(execution_roadmap)}</div>"
-    )
-    parts.append("</div></div>")
+    anchors = ai.get("metric_anchors") or []
+    if anchors:
+        parts.append(
+            f'<p style="margin: 0 0 10px 0; font-size: 0.85rem; color: #495057;">'
+            f"<strong>{esc('Metric anchors')}</strong></p><ul>"
+        )
+        for a in anchors:
+            parts.append(f"<li style=\"margin-bottom: 6px;\">{esc(str(a))}</li>")
+        parts.append("</ul>")
+    for ev in ai.get("supporting_evidence") or []:
+        if not isinstance(ev, dict):
+            continue
+        issue = ev.get("issue", "")
+        urls = ev.get("urls") or []
+        parts.append(
+            '<div style="border: 1px solid #dee2e6; padding: 14px 16px; margin-bottom: 12px; '
+            'background: #ffffff; border-radius: 8px;">'
+            f'<p style="margin: 0 0 10px 0;">{esc(issue)}</p>'
+        )
+        if urls:
+            parts.append("<ul style=\"margin: 0;\">")
+            for u in urls:
+                parts.append(f"<li>{esc(u)}</li>")
+            parts.append("</ul>")
+        parts.append("</div>")
+    parts.append("</div>")
 
     # Content health score
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Content Health Score")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
+        f'{esc("Content health score")}</h2>'
     )
     parts.append(f"<div {_SCORE_BOX}>")
     parts.append(
-        f'<p style="font-size: 32px; font-weight: 700; color: {score_color}; '
-        f'margin: 0 0 6px 0; letter-spacing: -0.02em;">'
+        f'<p style="font-size: 28px; font-weight: 700; color: {score_color}; '
+        f'margin: 0 0 6px 0;">'
         f"{esc(str(score))} <span style=\"font-weight: 500; color: #6c757d;\">/ 100</span></p>"
     )
     parts.append(
-        f'<p style="margin: 0 0 16px 0; font-size: 1.1rem; font-weight: 600; '
-        f'color: #333;">{esc(label)}</p>'
+        f'<p style="margin: 0 0 12px 0; font-weight: 600;">{esc(label)}</p>'
     )
-    parts.append(f"<p style=\"margin: 0 0 8px 0;\"><strong>{esc('Primary issues:')}</strong></p>")
-    parts.append("<ul style=\"margin: 0; padding-left: 1.25em;\">")
+    parts.append(f"<p style=\"margin: 0; font-size: 0.9em;\"><strong>{esc('Grouped themes:')}</strong></p><ul>")
     if grouped_issues:
-        for g in grouped_issues[:3]:
-            parts.append(
-                f"<li>{esc(_primary_issue_display(g.get('title', '')))}</li>"
-            )
+        for g in grouped_issues[:4]:
+            parts.append(f"<li>{esc(g.get('title', ''))}</li>")
     else:
-        parts.append(
-            f"<li>{esc('No grouped overlap patterns detected in this run')}</li>"
-        )
+        parts.append(f"<li>{esc('None detected in this run')}</li>")
     parts.append("</ul></div></div>")
-
-    # Key issues
-    parts.append(f"<div {_SECTION}>")
-    parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Key issues")}</h2>'
-    )
-    if not grouped_issues:
-        parts.append(f"<p>{esc('(No grouped topic-overlap issues.)')}</p>")
-    else:
-        for g in grouped_issues:
-            parts.append(
-                '<div style="border: 1px solid #e8eaed; border-radius: 8px; '
-                'border-left: 4px solid #5bc0de; padding: 14px 16px; margin-bottom: 14px; '
-                'background: #ffffff;">'
-            )
-            parts.append(
-                f"<p><strong>{esc(g['title'])}</strong> "
-                f"<span style=\"color:#666;\">[{esc(g['priority'])}]</span></p>"
-            )
-            parts.append(f"<p>{esc(g['summary'])}</p>")
-            parts.append(
-                f"<p style=\"font-size: 0.9em;\">"
-                f"{esc('Instances found:')} {g['count']}</p>"
-            )
-            parts.append(f"<p><strong>{esc('Example:')}</strong></p><ul>")
-            examples = g.get("examples") or []
-            if examples:
-                for url in examples[0].get("pages", []):
-                    parts.append(f"<li>{esc(url)}</li>")
-            parts.append("</ul></div>")
-    parts.append("</div>")
-
-    # Top recommended actions
-    parts.append(f"<div {_SECTION}>")
-    parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Top recommended actions")}</h2>'
-    )
-    if not top_actions:
-        parts.append(
-            f"<p>{esc('(No top actions generated from grouped issues.)')}</p>"
-        )
-    else:
-        parts.append("<ol>")
-        for action in top_actions:
-            parts.append(f"<li><strong>{esc(action['title'])}</strong>")
-            parts.append("<ul>")
-            for d in action.get("details", []):
-                parts.append(f"<li>{esc(d)}</li>")
-            parts.append("</ul></li>")
-        parts.append("</ol>")
-    parts.append("</div>")
 
     # Summary
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Summary")}</h2>'
+        f'<h2 style="margin: 0 0 12px 0; font-size: 1.1rem;">{esc("Summary")}</h2>'
     )
-    parts.append("<ul>")
+    parts.append("<ul style=\"margin: 0;\">")
     parts.append(f"<li>{esc('Pages analyzed:')} {len(all_pages)}</li>")
     parts.append(f"<li>{esc('Clusters found:')} {len(clusters)}</li>")
-    parts.append(f"<li>{esc('High priority issues:')} {high}</li>")
-    parts.append(f"<li>{esc('Medium priority issues:')} {med}</li>")
-    parts.append(f"<li>{esc('Low priority issues:')} {low}</li>")
+    parts.append(f"<li>{esc('High priority findings:')} {high}</li>")
+    parts.append(f"<li>{esc('Medium priority findings:')} {med}</li>")
+    parts.append(f"<li>{esc('Low priority findings:')} {low}</li>")
     parts.append("</ul></div>")
 
     # AI readiness
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
+        f'<h2 style="margin: 0 0 12px 0; font-size: 1.1rem;">'
         f'{esc("AI readiness signals")}</h2>'
     )
-    parts.append("<ul>")
+    parts.append("<ul style=\"margin: 0;\">")
     parts.append(
         f"<li>{esc('Guide content present:')} "
         f"{'YES' if ai_readiness['has_guide_content'] else 'NO'}</li>"
@@ -301,16 +310,17 @@ def generate_report(
     )
     parts.append("</ul></div>")
 
-    # Findings (duplication clusters)
+    # Detailed: cluster findings
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Findings")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
+        f'{esc("Detailed findings — cluster duplication")}</h2>'
     )
     if not dup_findings:
         parts.append(f"<p>{esc('(No cluster duplication findings.)')}</p>")
     for f in dup_findings:
-        lt = (f.get("type") or "unknown").upper()
+        ctype = f.get("type") or "unknown"
+        dup_t = f.get("duplication_type") or "—"
         cm = f.get("cross_market")
         market = "Cross-market" if cm else "Single-market"
         pri = f.get("priority", "MEDIUM")
@@ -318,7 +328,8 @@ def generate_report(
         action = f.get("action", "")
         parts.append(f"<div {_FINDING_CARD}>")
         parts.append(
-            f"<p><strong>{esc(lt)} {esc('duplication')}</strong> "
+            f"<p><strong>{esc(str(ctype))}</strong> · "
+            f"<span style=\"color:#495057;\">{esc(dup_t)}</span> "
             f"({esc(market)}) <span>[{esc(pri)}]</span></p>"
         )
         parts.append(f"<p>{esc('Action:')} {esc(action)}</p>")
@@ -332,8 +343,8 @@ def generate_report(
     # Topic overlap
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.25rem;">'
-        f'{esc("Topic overlap (high value findings)")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
+        f'{esc("Detailed findings — topic overlap")}</h2>'
     )
     if not overlap_findings:
         parts.append(
@@ -341,6 +352,7 @@ def generate_report(
         )
     else:
         for f in overlap_findings:
+            dup_t = f.get("duplication_type") or "—"
             cm = f.get("cross_market")
             market = "Cross-market" if cm else "Single-market"
             pri = f.get("priority", "MEDIUM")
@@ -349,7 +361,8 @@ def generate_report(
             impact = f.get("impact", "")
             parts.append(f"<div {_FINDING_CARD}>")
             parts.append(
-                f"<p><strong>{esc('Potential topic overlap')}</strong> "
+                f"<p><strong>{esc('Topic overlap')}</strong> · "
+                f"<span style=\"color:#495057;\">{esc(dup_t)}</span> "
                 f"({esc(market)}) <span>[{esc(pri)}]</span></p>"
             )
             parts.append(f"<p>{esc('Action:')} {esc(action)}</p>")

@@ -19,16 +19,19 @@ from app.analyzer import (
     calculate_content_health_score,
     compute_ai_readiness,
     detect_topic_overlap,
-    generate_top_actions,
     group_findings,
     is_valid_cluster,
     score_label,
 )
 from app.ai_insights import (
     LLMClient,
+    build_fallback_insights,
+    build_fallback_roadmap,
     compute_audit_metrics,
     generate_ai_insights,
     generate_execution_roadmap,
+    validate_ai_output,
+    validate_roadmap_output,
 )
 from app.report import generate_report
 
@@ -128,8 +131,6 @@ def run_audit(sites: str = Form(...)):
 
     grouped_issues = group_findings(all_findings)
 
-    top_actions = generate_top_actions(grouped_issues)
-
     ai_readiness = compute_ai_readiness(pages)
 
     score = calculate_content_health_score(
@@ -155,7 +156,6 @@ def run_audit(sites: str = Form(...)):
             "content_uniqueness_score": metrics["content_uniqueness_score"],
         },
         "grouped_issues": grouped_issues,
-        "top_actions": top_actions,
         "ai_readiness": ai_readiness,
         "clusters": [
             {
@@ -166,41 +166,46 @@ def run_audit(sites: str = Form(...)):
         ],
     }
 
-    ai_insights = ""
-    execution_roadmap = ""
+    ai_insights = build_fallback_insights(analysis_payload)
+    execution_roadmap = build_fallback_roadmap(analysis_payload)
+
     if os.getenv("OPENAI_API_KEY"):
         llm = LLMClient()
         try:
-            ai_insights = generate_ai_insights(analysis_payload, llm)
+            raw_insights = generate_ai_insights(analysis_payload, llm)
+            if validate_ai_output(raw_insights):
+                ai_insights = raw_insights
+            else:
+                fb = build_fallback_insights(analysis_payload)
+                fb["verdict"] = (
+                    "AI response failed validation (missing fields or evidence). "
+                    "Showing data-backed fallback."
+                )
+                ai_insights = fb
         except Exception as exc:
-            ai_insights = (
-                "Strategic interpretation could not be generated. "
-                f"Error: {exc}"
+            fb = build_fallback_insights(analysis_payload)
+            fb["verdict"] = (
+                f"AI interpretation error: {exc}. Showing data-backed fallback."
             )
+            ai_insights = fb
         try:
-            execution_roadmap = generate_execution_roadmap(analysis_payload, llm)
-        except Exception as exc:
-            execution_roadmap = (
-                "30-day execution plan could not be generated. "
-                f"Error: {exc}"
-            )
-    else:
-        msg = (
-            "Set OPENAI_API_KEY to enable AI strategic interpretation "
-            "and the 30-day execution plan for this report."
-        )
-        ai_insights = msg
-        execution_roadmap = msg
+            raw_roadmap = generate_execution_roadmap(analysis_payload, llm)
+            if validate_roadmap_output(raw_roadmap):
+                execution_roadmap = raw_roadmap
+            else:
+                execution_roadmap = build_fallback_roadmap(analysis_payload)
+        except Exception:
+            execution_roadmap = build_fallback_roadmap(analysis_payload)
 
     report = generate_report(
         all_findings,
         grouped_issues,
-        top_actions,
         score,
         label,
         pages,
         clusters,
         ai_readiness,
+        report_metrics=metrics,
         ai_insights=ai_insights,
         execution_roadmap=execution_roadmap,
     )
