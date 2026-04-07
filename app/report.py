@@ -62,6 +62,36 @@ def _executive_insights_lines(findings):
     return lines
 
 
+def _primary_issue_display(title: str) -> str:
+    mapping = {
+        "Product Positioning Overlap": "Product positioning overlap",
+        "Cross-Market Content Duplication": "Cross-market duplication",
+        "Informational Content Overlap": "Overlapping informational content",
+        "General Content Overlap": "Structural inefficiencies",
+    }
+    return mapping.get(title, title)
+
+
+def _content_health_score_lines(score, label, grouped_issues):
+    lines = [
+        "CONTENT HEALTH SCORE",
+        "",
+        f"{score} / 100 — {label}",
+        "",
+    ]
+    if grouped_issues:
+        lines.append("Primary issues:")
+        for g in grouped_issues[:3]:
+            lines.append(f"- {_primary_issue_display(g.get('title', ''))}")
+        lines.append("")
+    else:
+        lines.append("Primary issues:")
+        lines.append("- No grouped overlap patterns detected in this run")
+        lines.append("")
+
+    return lines
+
+
 def _key_issues_lines(grouped_issues):
     lines = ["KEY ISSUES", ""]
     if not grouped_issues:
@@ -100,7 +130,14 @@ def _top_recommended_actions_lines(top_actions):
 
 
 def generate_report(
-    findings, grouped_issues, top_actions, all_pages, clusters, ai_readiness
+    findings,
+    grouped_issues,
+    top_actions,
+    score,
+    label,
+    all_pages,
+    clusters,
+    ai_readiness,
 ):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
@@ -114,6 +151,7 @@ def generate_report(
         "",
     ]
     lines.extend(_executive_insights_lines(findings))
+    lines.extend(_content_health_score_lines(score, label, grouped_issues))
     lines.extend(_key_issues_lines(grouped_issues))
     lines.extend(_top_recommended_actions_lines(top_actions))
     lines.extend(

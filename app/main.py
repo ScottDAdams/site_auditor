@@ -15,11 +15,13 @@ from app.clustering import cluster_pages
 from app.analyzer import (
     analyze_clusters,
     analyze_overlaps,
+    calculate_content_health_score,
     compute_ai_readiness,
     detect_topic_overlap,
     generate_top_actions,
     group_findings,
     is_valid_cluster,
+    score_label,
 )
 from app.report import generate_report
 
@@ -121,11 +123,16 @@ def run_audit(sites: str = Form(...)):
 
     top_actions = generate_top_actions(grouped_issues)
 
+    score = calculate_content_health_score(all_findings, grouped_issues, clusters)
+    label = score_label(score)
+
     ai_readiness = compute_ai_readiness(pages)
     report = generate_report(
         all_findings,
         grouped_issues,
         top_actions,
+        score,
+        label,
         pages,
         clusters,
         ai_readiness,

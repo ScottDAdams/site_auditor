@@ -434,3 +434,32 @@ def generate_top_actions(grouped_issues):
         )
 
     return actions[:3]
+
+
+def calculate_content_health_score(findings, grouped_issues, clusters):
+    score = 100
+
+    high = sum(1 for f in findings if f.get("priority") == "HIGH")
+    medium = sum(1 for f in findings if f.get("priority") == "MEDIUM")
+
+    score -= high * 8
+    score -= medium * 4
+
+    if len(clusters) > 5:
+        score -= min(10, len(clusters))
+
+    if len(grouped_issues) == 1:
+        score -= 5
+
+    return max(0, min(100, score))
+
+
+def score_label(score):
+    if score >= 85:
+        return "Strong"
+    elif score >= 70:
+        return "Good"
+    elif score >= 55:
+        return "Moderate Risk"
+    else:
+        return "High Risk"
