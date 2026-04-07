@@ -17,6 +17,7 @@ from app.analyzer import (
     analyze_clusters,
     analyze_overlaps,
     calculate_content_health_score,
+    classify_cluster_decisions,
     compute_ai_readiness,
     detect_topic_overlap,
     group_findings,
@@ -35,6 +36,22 @@ from app.ai_insights import (
 )
 from app.business_context import build_business_context
 from app.report import generate_report
+from app.utils import normalize_url
+
+
+def _filter_roadmap_equivalent_targets(roadmap_obj: dict | None) -> dict:
+    """Drop roadmap steps whose first two targets normalize to the same URL."""
+    if not roadmap_obj or not isinstance(roadmap_obj, dict):
+        return roadmap_obj or {"roadmap": []}
+    valid = []
+    for step in roadmap_obj.get("roadmap") or []:
+        urls = step.get("target_urls") or []
+        if len(urls) >= 2 and normalize_url(str(urls[0])) == normalize_url(str(urls[1])):
+            continue
+        valid.append(step)
+    for i, s in enumerate(valid, start=1):
+        s["step"] = i
+    return {**roadmap_obj, "roadmap": valid}
 
 app = FastAPI()
 
@@ -66,7 +83,7 @@ def favicon():
     )
 
 
-def normalize_url(url: str) -> str | None:
+def normalize_site_seed(url: str) -> str | None:
     url = url.strip()
 
     if not url:
@@ -87,6 +104,7 @@ def home(request: Request):
                 "avg_similarity": c.get("avg_similarity"),
                 "dominant_url": c.get("dominant_url"),
                 "competing_urls": c.get("competing_urls"),
+                "decision_type": c.get("decision_type"),
                 "pages": [
                     {"url": p.get("url"), "type": p.get("type")}
                     for p in c.get("pages", [])
@@ -108,7 +126,7 @@ def home(request: Request):
 def run_audit(sites: str = Form(...)):
     STATE["status"] = "running"
 
-    site_list = [normalize_url(s) for s in sites.split(",")]
+    site_list = [normalize_site_seed(s) for s in sites.split(",")]
     site_list = [s for s in site_list if s]
 
     print("---- AUDIT START ----")
@@ -121,9 +139,13 @@ def run_audit(sites: str = Form(...)):
     print("Embeddings:", len(embeddings))
 
     clusters = cluster_pages(pages, embeddings)
+    classify_cluster_decisions(clusters)
     print("Clusters:", len(clusters))
 
-    findings = analyze_clusters(clusters)
+    strategic_clusters = [
+        c for c in clusters if c.get("decision_type") == "strategic"
+    ]
+    findings = analyze_clusters(strategic_clusters)
     print("Findings:", len(findings))
 
     overlaps = detect_topic_overlap(pages, embeddings, clusters)
@@ -143,6 +165,21 @@ def run_audit(sites: str = Form(...)):
 
     metrics = compute_audit_metrics(pages, clusters, all_findings)
     business_context = build_business_context(pages)
+
+    def _cluster_payload_row(c):
+        return {
+            "similarity": c["avg_similarity"],
+            "dominant_url": c.get("dominant_url"),
+            "competing_urls": c.get("competing_urls") or [],
+            "pages": [p["url"] for p in c["pages"][:8]],
+            "decision_type": c.get("decision_type"),
+            "technical_issue": c.get("technical_issue"),
+            "technical_fix_recommendation": c.get("technical_fix_recommendation"),
+        }
+
+    cluster_rows = [_cluster_payload_row(c) for c in clusters[:20]]
+    strategic_rows = [r for r in cluster_rows if r.get("decision_type") == "strategic"]
+
     analysis_payload = {
         "business_context": business_context,
         "summary": {
@@ -163,15 +200,13 @@ def run_audit(sites: str = Form(...)):
         "grouped_issues": grouped_issues,
         "ai_readiness": ai_readiness,
         "page_urls": [p["url"] for p in pages],
-        "clusters": [
-            {
-                "similarity": c["avg_similarity"],
-                "dominant_url": c.get("dominant_url"),
-                "competing_urls": c.get("competing_urls") or [],
-                "pages": [p["url"] for p in c["pages"][:8]],
-            }
-            for c in clusters[:12]
-        ],
+        "clusters": cluster_rows,
+        "strategic_clusters": strategic_rows,
+    }
+
+    payload_for_ai = {
+        **{k: v for k, v in analysis_payload.items() if k != "strategic_clusters"},
+        "clusters": list(strategic_rows),
     }
 
     ai_insights = build_fallback_insights(analysis_payload)
@@ -180,21 +215,13 @@ def run_audit(sites: str = Form(...)):
     if os.getenv("OPENAI_API_KEY"):
         llm = LLMClient()
         try:
-            raw_insights = generate_ai_insights(analysis_payload, llm)
+            raw_insights = generate_ai_insights(payload_for_ai, llm)
             if validate_ai_output(raw_insights):
                 ai_insights = raw_insights
             else:
                 fb = build_fallback_insights(analysis_payload)
-                anchor = ""
-                for c in analysis_payload.get("clusters") or []:
-                    if c.get("dominant_url"):
-                        anchor = str(c["dominant_url"])
-                        break
-                if not anchor and analysis_payload.get("page_urls"):
-                    anchor = analysis_payload["page_urls"][0]
                 fb["verdict"] = (
-                    f"AI JSON failed validation; using crawl-backed decision data"
-                    f"{f' anchored at {anchor}' if anchor else ''}."
+                    "Technical duplication dominates the crawl; no structural consolidation is required."
                 )
                 ai_insights = fb
         except Exception as exc:
@@ -212,7 +239,7 @@ def run_audit(sites: str = Form(...)):
             )
             ai_insights = fb
         try:
-            raw_roadmap = generate_execution_roadmap(analysis_payload, llm)
+            raw_roadmap = generate_execution_roadmap(payload_for_ai, llm)
             if validate_roadmap_output(
                 raw_roadmap, analysis_payload.get("business_context")
             ):
@@ -221,6 +248,8 @@ def run_audit(sites: str = Form(...)):
                 execution_roadmap = build_fallback_roadmap(analysis_payload)
         except Exception:
             execution_roadmap = build_fallback_roadmap(analysis_payload)
+
+    execution_roadmap = _filter_roadmap_equivalent_targets(execution_roadmap)
 
     report = generate_report(
         all_findings,

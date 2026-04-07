@@ -2,6 +2,13 @@ from urllib.parse import urlparse
 
 from sklearn.metrics.pairwise import cosine_similarity
 
+from app.utils import (
+    canonical_resource_key,
+    infer_technical_issue,
+    normalize_url,
+    urls_equivalent,
+)
+
 
 def is_homepage(url: str) -> bool:
     path = urlparse(url).path
@@ -104,6 +111,57 @@ def classify_topic_overlap(o: dict) -> str:
     if sim >= 0.88:
         return "Intent overlap"
     return "Structural duplication"
+
+
+def classify_cluster_decisions(clusters):
+    """
+    Tag each cluster for downstream AI vs technical-only handling.
+    - ignore: normalized URLs are identical (crawl / alias noise).
+    - technical_fix: same canonical resource, different URL forms (www, scheme, slash).
+    - strategic: distinct resources; needs content strategy.
+    """
+    for cluster in clusters or []:
+        pages = cluster.get("pages") or []
+        urls = [p["url"] for p in pages if p.get("url")]
+        cluster["urls"] = list(urls)
+        equivalent_urls = []
+        distinct_urls = []
+        for url in urls:
+            others = [o for o in urls if o != url]
+            if any(urls_equivalent(url, o) for o in others):
+                equivalent_urls.append(url)
+            else:
+                distinct_urls.append(url)
+        cluster["equivalent_urls"] = equivalent_urls
+        cluster["distinct_urls"] = distinct_urls
+
+        if len(urls) < 2:
+            cluster["decision_type"] = "ignore"
+            cluster["technical_issue"] = None
+            cluster["technical_fix_recommendation"] = None
+            continue
+        norms = {normalize_url(u) for u in urls}
+        ckeys = {canonical_resource_key(u) for u in urls}
+        if len(norms) == 1:
+            cluster["decision_type"] = "ignore"
+            cluster["technical_issue"] = None
+            cluster["technical_fix_recommendation"] = None
+        elif len(distinct_urls) < 2:
+            cluster["decision_type"] = "technical_fix"
+            cluster["technical_issue"] = infer_technical_issue(urls)
+            cluster["technical_fix_recommendation"] = (
+                "301 redirect to one canonical URL + rel=canonical on duplicate URLs"
+            )
+        elif len(ckeys) == 1:
+            cluster["decision_type"] = "technical_fix"
+            cluster["technical_issue"] = infer_technical_issue(urls)
+            cluster["technical_fix_recommendation"] = (
+                "301 redirect to one canonical URL + rel=canonical on duplicate URLs"
+            )
+        else:
+            cluster["decision_type"] = "strategic"
+            cluster["technical_issue"] = None
+            cluster["technical_fix_recommendation"] = None
 
 
 DUPLICATION_RULES = {

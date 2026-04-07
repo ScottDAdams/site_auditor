@@ -11,6 +11,14 @@ from app.business_context import (
     roadmap_step_allowed,
     url_requires_preservation,
 )
+from app.utils import normalize_url
+
+
+def safe_pair(a: str, b: str) -> bool:
+    """True if two URLs are different resources after normalization (safe for merge/redirect copy)."""
+    if not a or not b:
+        return False
+    return normalize_url(a) != normalize_url(b)
 
 BANNED_VERBS_RE = re.compile(
     r"\b(improve|optimi[sz]e|enhance|refine|strengthen|align)\b",
@@ -21,7 +29,7 @@ VERDICT_FLUFF_RE = re.compile(
     re.I,
 )
 ACTION_VERBS_RE = re.compile(
-    r"\b(merge|delete|consolidate|redirect|split|rewrite|differentiate|reposition)\b",
+    r"\b(merge|delete|consolidate|redirect|split|rewrite|differentiate|reposition|none)\b",
     re.I,
 )
 URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
@@ -36,6 +44,7 @@ ROADMAP_ACTION_TYPES = frozenset(
         "rewrite",
         "differentiate",
         "reposition",
+        "none",
     }
 )
 
@@ -51,6 +60,8 @@ def compute_audit_metrics(pages, clusters, all_findings):
 
     involved = set()
     for c in clusters:
+        if c.get("decision_type") == "ignore":
+            continue
         for p in c.get("pages", []):
             u = p.get("url") if isinstance(p, dict) else p
             if u:
@@ -67,7 +78,9 @@ def compute_audit_metrics(pages, clusters, all_findings):
     sims = [
         float(c.get("avg_similarity", 0))
         for c in clusters
-        if c.get("pages") and len(c["pages"]) > 1
+        if c.get("decision_type") != "ignore"
+        and c.get("pages")
+        and len(c["pages"]) > 1
     ]
     avg_sim = round(sum(sims) / len(sims), 4) if sims else 0.0
 
@@ -88,7 +101,7 @@ If your output could apply to another website, it is wrong.
 
 Every statement must tie to a URL from the payload or a numeric value from payload.metrics.
 Do not use: improve, optimize, enhance, refine, strengthen, align.
-Use concrete operations: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition (only where allowed by business_context.allowed_actions).
+Use concrete operations: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition, none (only where allowed by business_context.allowed_actions). Use "none" only when no structural content action is appropriate (e.g. technical-only issues already routed elsewhere).
 """
 
 CONSTRAINT_PROMPT = """
@@ -146,6 +159,8 @@ The recommendation MUST:
 
 Each metrics_explained row MUST give value + implication in plain business terms (e.g. what 0.94 similarity means for Google or conversion).
 
+The "clusters" array in this payload contains ONLY strategic clusters (distinct canonical resources). Ignore/technical URL-alias clusters are excluded—do not recommend merging URLs that are already normalized equivalents.
+
 DATA:
 {data}
 
@@ -185,7 +200,8 @@ You are a digital strategy operator. Return JSON only (no markdown).
 Create a 30-day execution plan: 3 to 5 steps, ordered by impact.
 
 Each step MUST:
-- set action_type to exactly one of: merge, redirect, delete, consolidate, split, rewrite, differentiate, reposition
+- set action_type to exactly one of: merge, redirect, delete, consolidate, split, rewrite, differentiate, reposition, none
+- target_urls[0] and target_urls[1] MUST NOT normalize to the same URL when both are present (distinct destinations only)
 - obey business_context.allowed_actions (only use action types set to true)
 - NEVER use delete on protected_paths or core_product URLs; NEVER merge/redirect across regions when separate_regions is true
 - include target_urls with at least one real https URL from the payload
@@ -295,7 +311,11 @@ def _roadmap_step_ok(item: dict) -> bool:
     if at not in ROADMAP_ACTION_TYPES:
         return False
     urls = item.get("target_urls")
-    if not isinstance(urls, list) or len(urls) < 1:
+    if not isinstance(urls, list):
+        return False
+    if at == "none":
+        return bool(item.get("title") or item.get("description"))
+    if len(urls) < 1:
         return False
     if not item.get("title") or not item.get("description"):
         return False
@@ -317,29 +337,41 @@ def validate_roadmap_output(obj, business_context: dict | None = None) -> bool:
     for x in r:
         if not _roadmap_step_ok(x):
             return False
+        turls = x.get("target_urls") or []
+        if isinstance(turls, list) and len(turls) >= 2:
+            if normalize_url(str(turls[0])) == normalize_url(str(turls[1])):
+                return False
         if not roadmap_step_allowed(x, bc):
             return False
     return True
 
 
+def _strategic_cluster_rows(payload: dict) -> list:
+    sc = payload.get("strategic_clusters")
+    if isinstance(sc, list) and len(sc) > 0:
+        return sc
+    return [
+        c
+        for c in (payload.get("clusters") or [])
+        if c.get("decision_type") == "strategic"
+    ]
+
+
 def _first_urls_from_payload(payload: dict, limit: int = 8):
+    """URLs from strategic clusters only — no grouped_issues or page_urls (avoids contamination)."""
     urls = []
-    for c in payload.get("clusters") or []:
+    for c in _strategic_cluster_rows(payload):
         d = c.get("dominant_url")
         if d:
             urls.append(d)
         for u in c.get("competing_urls") or []:
             urls.append(u)
-        for u in c.get("pages") or []:
-            urls.append(u)
-        if len(urls) >= limit:
-            break
-    for g in payload.get("grouped_issues") or []:
-        for ex in g.get("examples") or []:
-            for u in ex.get("pages") or []:
+        for p in c.get("pages") or []:
+            u = p if isinstance(p, str) else (p.get("url") if isinstance(p, dict) else None)
+            if u:
                 urls.append(u)
-    for u in payload.get("page_urls") or []:
-        urls.append(u)
+        if len(urls) >= limit * 2:
+            break
     out = []
     seen = set()
     for u in urls:
@@ -351,13 +383,78 @@ def _first_urls_from_payload(payload: dict, limit: int = 8):
     return out
 
 
+def _candidate_url_pairs(urls: list[str], max_urls: int = 10) -> list[tuple[str, str]]:
+    u = urls[:max_urls]
+    pairs = []
+    for i in range(len(u)):
+        for j in range(i + 1, len(u)):
+            pairs.append((u[i], u[j]))
+    return pairs
+
+
+def _fallback_insights_technical_variants_only(
+    metrics_explained: list, m: dict, payload: dict
+) -> dict:
+    pu = (payload.get("page_urls") or [])[:2]
+    ev_urls = pu if len(pu) >= 2 else (pu + ["https://127.0.0.1/"])[:2]
+    return {
+        "verdict": "No strategic content conflicts detected after normalization.",
+        "core_problem": (
+            "Duplicate signals are caused by technical URL variants, not structural content issues."
+        ),
+        "recommendation": "Apply canonical tags and redirects to normalize URL variants.",
+        "business_impact": (
+            "Technical URL duplication can dilute crawl budget and split signals until one canonical URL is chosen."
+        ),
+        "inaction_risk": (
+            "Without canonical normalization, equivalent URLs may continue to compete for the same intent."
+        ),
+        "metrics_explained": metrics_explained,
+        "primary_clusters": [
+            "No strategic duplicate clusters after normalization—address variants under Technical SEO fixes."
+        ],
+        "supporting_evidence": [
+            {
+                "urls": ev_urls[:1] or ["https://127.0.0.1/"],
+                "issue": "Embedding overlap is driven by URL aliases, not distinct page topics.",
+                "metric_refs": [f"overlap_rate {m.get('overlap_rate', 0)}"],
+            },
+            {
+                "urls": ev_urls if len(ev_urls) >= 2 else ev_urls + ["https://127.0.0.1/"],
+                "issue": "Normalize scheme, host, trailing slashes, and homepage paths before content consolidation.",
+                "metric_refs": [
+                    f"avg_cluster_similarity {m.get('avg_cluster_similarity', 0)}",
+                    f"content_uniqueness_score {m.get('content_uniqueness_score', 0)}",
+                ],
+            },
+        ],
+    }
+
+
+def _safe_evidence_urls_for_cluster(c: dict) -> list[str]:
+    """Up to two URLs from a strategic cluster that are not normalization-equivalent."""
+    dom = c.get("dominant_url")
+    comp = c.get("competing_urls") or []
+    if dom:
+        for co in comp:
+            if safe_pair(dom, co):
+                return [dom, co]
+    plist = []
+    for p in c.get("pages") or []:
+        u = p if isinstance(p, str) else (p.get("url") if isinstance(p, dict) else None)
+        if u:
+            plist.append(u)
+    for i, a in enumerate(plist):
+        for b in plist[i + 1 :]:
+            if safe_pair(a, b):
+                return [a, b]
+    return []
+
+
 def build_fallback_insights(payload: dict) -> dict:
     m = payload.get("metrics") or {}
     bc = payload.get("business_context") or {}
     mc = bc.get("market_context") or {}
-    urls_pool = _first_urls_from_payload(payload, 12)
-    u0 = urls_pool[0] if urls_pool else None
-    u1 = urls_pool[1] if len(urls_pool) > 1 else u0
 
     metrics_explained = [
         {
@@ -386,8 +483,23 @@ def build_fallback_insights(payload: dict) -> dict:
         },
     ]
 
+    clusters_strategic = [
+        c for c in (payload.get("clusters") or []) if c.get("decision_type") == "strategic"
+    ]
+    if payload.get("strategic_clusters"):
+        clusters_strategic = list(payload["strategic_clusters"])
+
+    urls_pool = _first_urls_from_payload(payload, 12)
+    candidate_pairs = _candidate_url_pairs(urls_pool, 12)
+    safe_pairs = [(a, b) for (a, b) in candidate_pairs if safe_pair(a, b)]
+
+    if not clusters_strategic or not safe_pairs:
+        return _fallback_insights_technical_variants_only(metrics_explained, m, payload)
+
+    u0, u1 = safe_pairs[0]
+
     primary_clusters = []
-    for i, c in enumerate((payload.get("clusters") or [])[:5], start=1):
+    for i, c in enumerate(clusters_strategic[:5], start=1):
         dom = c.get("dominant_url") or ""
         comp = ", ".join((c.get("competing_urls") or [])[:4])
         sim = c.get("similarity", c.get("avg_similarity", ""))
@@ -395,38 +507,15 @@ def build_fallback_insights(payload: dict) -> dict:
             f"Cluster {i} (similarity {sim}): canonical {dom}; competing {comp}"
         )
 
-    if not primary_clusters:
-        primary_clusters.append(
-            "No multi-page embedding cluster in this sample—expand crawl URLs to capture overlap."
-        )
-
     ev = []
-    for g in payload.get("grouped_issues", [])[:2]:
-        ulist = []
-        for ex in (g.get("examples") or [])[:1]:
-            ulist = (ex.get("pages") or [])[:4]
-        if not ulist and urls_pool:
-            ulist = urls_pool[:2]
-        ev.append(
-            {
-                "urls": ulist or (urls_pool[:2] if urls_pool else (payload.get("page_urls") or [])[:2]),
-                "issue": (g.get("title") or "Overlap") + ": " + (g.get("summary") or "")[:320],
-                "metric_refs": [
-                    f"overlap_rate {m.get('overlap_rate', 0)}",
-                    f"avg_cluster_similarity {m.get('avg_cluster_similarity', 0)}",
-                ],
-            }
-        )
-    for c in payload.get("clusters") or []:
+    for c in clusters_strategic:
         if len(ev) >= 3:
             break
-        dom = c.get("dominant_url")
-        comp = c.get("competing_urls") or []
-        pages = c.get("pages") or []
-        ulist = [dom] + list(comp) if dom else pages[:4]
-        ulist = [x for x in ulist if x][:4]
+        ulist = _safe_evidence_urls_for_cluster(c)
         if len(ulist) < 2:
             continue
+        dom = c.get("dominant_url")
+        comp = c.get("competing_urls") or []
         ev.append(
             {
                 "urls": ulist,
@@ -440,13 +529,21 @@ def build_fallback_insights(payload: dict) -> dict:
                 ],
             }
         )
-    while len(ev) < 2:
-        pu = (payload.get("page_urls") or [])[:2]
+    spi = 0
+    while len(ev) < 2 and spi < len(safe_pairs):
+        a, b = safe_pairs[spi]
+        spi += 1
         ev.append(
             {
-                "urls": pu or urls_pool[:2] or ["https://127.0.0.1/"],
-                "issue": "Crawl returned sparse overlap—expand seed URLs and re-run.",
-                "metric_refs": [f"overlap_rate {m.get('overlap_rate', 0)}"],
+                "urls": [a, b],
+                "issue": (
+                    "Distinct normalized URLs share one embedding cluster—address as content strategy, "
+                    "not URL-alias cleanup."
+                ),
+                "metric_refs": [
+                    f"overlap_rate {m.get('overlap_rate', 0)}",
+                    f"avg_cluster_similarity {m.get('avg_cluster_similarity', 0)}",
+                ],
             }
         )
 
@@ -469,6 +566,10 @@ def build_fallback_insights(payload: dict) -> dict:
             f"Reposition {u0} and {u1} with market-specific proof and offers; "
             f"do not merge or redirect across regional domains."
         )
+        core_problem = (
+            f"Regional domains share near-identical embeddings ({u0} vs {u1}); the issue is "
+            f"undifferentiated copy, not excess URLs."
+        )
     elif any_preserved:
         preserved_list = [u for u in urls_pool if url_requires_preservation(u, bc)][:4]
         pl = ", ".join(preserved_list) if preserved_list else anchor_url
@@ -479,6 +580,10 @@ def build_fallback_insights(payload: dict) -> dict:
         rec = (
             f"Differentiate {pl}: rewrite H1, hero, and eligibility copy so each required "
             f"page owns one use case; do not delete or merge those routes away."
+        )
+        core_problem = (
+            f"Required URLs participate in overlap signals while staying business-mandatory; "
+            f"the issue is positioning collision, not removable pages."
         )
     else:
         verdict = (
@@ -491,33 +596,12 @@ def build_fallback_insights(payload: dict) -> dict:
                 f"at overlap_rate {m.get('overlap_rate', 0)}."
             )
         rec = (
-            f"Consolidate duplicate sections into one canonical URL (start with {anchor_url}), "
-            f"then redirect secondary URLs listed under each cluster."
+            f"Merge body copy from {u1} into {u0}, then redirect "
+            f"secondary URLs after redundant blocks are removed."
         )
-        if urls_pool and len(urls_pool) > 1:
-            rec = (
-                f"Merge body copy from {urls_pool[1]} into {urls_pool[0]}, then redirect "
-                f"{urls_pool[1]} after redundant blocks are removed."
-            )
-        elif urls_pool:
-            rec = (
-                f"Rewrite {urls_pool[0]} as the single canonical page, then redirect "
-                f"duplicate routes that are not business-required."
-            )
-
-    core_problem = (
-        "The crawl maps competing URLs into the same embedding cluster; canonical vs "
-        "competing paths are listed per cluster above."
-    )
-    if cross_regional:
         core_problem = (
-            f"Regional domains share near-identical embeddings ({u0} vs {u1}); the issue is "
-            f"undifferentiated copy, not excess URLs."
-        )
-    elif any_preserved:
-        core_problem = (
-            f"Required URLs participate in overlap signals while staying business-mandatory; "
-            f"the issue is positioning collision, not removable pages."
+            "The crawl maps competing URLs into the same embedding cluster; canonical vs "
+            "competing paths are listed per strategic cluster above."
         )
 
     return {
@@ -538,18 +622,53 @@ def build_fallback_insights(payload: dict) -> dict:
     }
 
 
+def _default_no_consolidation_roadmap_step() -> dict:
+    return {
+        "step": 1,
+        "action_type": "none",
+        "title": "No structural consolidation required",
+        "description": (
+            "Detected duplication is due to technical URL variants, not content structure."
+        ),
+        "target_urls": [],
+        "expected_outcome": "Improved crawl consistency after canonical normalization.",
+        "evidence_refs": [],
+    }
+
+
 def build_fallback_roadmap(payload: dict) -> dict:
+    if not _strategic_cluster_rows(payload):
+        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+
     bc = payload.get("business_context") or {}
     allowed = effective_allowed_actions(bc)
     mc = bc.get("market_context") or {}
 
     urls = _first_urls_from_payload(payload, 12)
     if not urls:
-        urls = list(payload.get("page_urls") or [])[:8]
-    gissues = payload.get("grouped_issues") or []
+        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+
+    candidate_pairs = _candidate_url_pairs(urls, 12)
+    safe_pairs = [(a, b) for (a, b) in candidate_pairs if safe_pair(a, b)]
+    if not safe_pairs:
+        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+
+    u0, u1 = safe_pairs[0]
+    u2 = None
+    for cand in urls:
+        if cand == u0:
+            continue
+        if safe_pair(cand, u0):
+            u2 = cand
+            break
+
     steps = []
 
     def push(step: dict) -> bool:
+        turls = step.get("target_urls") or []
+        if isinstance(turls, list) and len(turls) >= 2:
+            if normalize_url(str(turls[0])) == normalize_url(str(turls[1])):
+                return False
         step = {**step, "step": len(steps) + 1}
         if roadmap_step_allowed(step, bc):
             steps.append(step)
@@ -564,6 +683,9 @@ def build_fallback_roadmap(payload: dict) -> dict:
         outcome: str,
         refs: list,
     ) -> bool:
+        if len(targets) >= 2:
+            if normalize_url(str(targets[0])) == normalize_url(str(targets[1])):
+                return False
         if not allowed.get(primary, False):
             return False
         if push(
@@ -627,11 +749,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
                     return True
         return False
 
-    u0 = urls[0] if urls else None
-    u1 = urls[1] if len(urls) > 1 else u0
-    u2 = urls[2] if len(urls) > 2 else u1
-
-    if u0 and u1 and u0 != u1:
+    if u0 and u1 and safe_pair(u0, u1):
         if mc.get("separate_regions") and is_cross_domain(u0, u1):
             try_action(
                 "differentiate",
@@ -659,18 +777,17 @@ def build_fallback_roadmap(payload: dict) -> dict:
                 "One ranking URL per intent; internal links stop splitting across twins.",
                 ["cluster dominant_url", "avg_cluster_similarity"],
             )
-
-    elif u0:
+    elif urls:
         try_action(
             "rewrite",
             "Differentiate the sampled page",
-            f"Rewrite headings and proof blocks on {u0} so it cannot match sibling URLs verbatim.",
-            [u0],
+            f"Rewrite headings and proof blocks on {urls[0]} so it cannot match sibling URLs verbatim.",
+            [urls[0]],
             "Embeddings diverge enough to exit duplicate clusters on the next crawl.",
             ["content_uniqueness_score"],
         )
 
-    if u0 and u2 and u2 != u0 and len(steps) < 5:
+    if u0 and u2 and safe_pair(u2, u0) and len(steps) < 5:
         try_action(
             "redirect",
             "Point secondary URL to canonical",
@@ -680,64 +797,8 @@ def build_fallback_roadmap(payload: dict) -> dict:
             ["roadmap prior step"],
         )
 
-    if gissues and len(steps) < 5:
-        g = gissues[0]
-        exu = []
-        for ex in g.get("examples") or []:
-            exu.extend(ex.get("pages") or [])
-        exu = exu[:4] or urls[:2]
-        if exu:
-            any_p = any(url_requires_preservation(u, bc) for u in exu)
-            if any_p:
-                try_action(
-                    "reposition",
-                    f"Reposition {g.get('title', 'theme')} pages",
-                    f"Reposition copy on {exu[0]} (and siblings) so each required URL states a unique angle.",
-                    exu[:3],
-                    "Required URLs stay live with clearer intent ownership.",
-                    ["grouped_issues"],
-                )
-            else:
-                try_action(
-                    "consolidate",
-                    f"Address {g.get('title', 'overlap group')}",
-                    f"Consolidate overlapping sections on {exu[0]} that repeat the same story as sibling URLs.",
-                    exu[:3],
-                    "One owned narrative per theme where URLs are not business-protected.",
-                    ["grouped_issues"],
-                )
-
-    seed = (urls[0] if urls else None) or "https://127.0.0.1/"
-    pad_specs = [
-        (
-            "split",
-            "Separate intents on the first ranked URL",
-            f"Split opening blocks on {seed} so product and guide intents do not share the same lead sentence.",
-            [seed],
-            "Distinct embeddings between intents on the next crawl.",
-            ["overlap_rate"],
-        ),
-        (
-            "merge",
-            "Collapse duplicate headings on that URL",
-            f"Merge repeated H2 sections on {seed} into one scannable outline.",
-            [seed],
-            "One heading hierarchy per page.",
-            ["avg_cluster_similarity"],
-        ),
-        (
-            "rewrite",
-            "Differentiate proof and CTA lines",
-            f"Rewrite testimonial and CTA lines on {seed} so they cannot match sibling routes verbatim.",
-            [seed],
-            "Copy diverges in embeddings versus competing URLs.",
-            ["content_uniqueness_score"],
-        ),
-    ]
-    for spec in pad_specs:
-        if len(steps) >= 3:
-            break
-        try_action(*spec)
+    if not steps:
+        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
 
     out = steps[:5]
     for i, s in enumerate(out, start=1):
