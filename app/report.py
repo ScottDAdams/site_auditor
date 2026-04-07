@@ -3,6 +3,7 @@ def _executive_insights_lines(findings):
     high_n = sum(1 for f in findings if f.get("priority") == "HIGH")
     med_n = sum(1 for f in findings if f.get("priority") == "MEDIUM")
     overlap = [f for f in findings if f.get("type") == "topic_overlap"]
+    dup_findings = [f for f in findings if f.get("type") != "topic_overlap"]
     any_cross = any(f.get("cross_market") for f in findings)
 
     product_conflict_high = any(
@@ -10,14 +11,25 @@ def _executive_insights_lines(findings):
         and "product" in (f.get("overlap_types") or [])
         for f in overlap
     )
+    product_positioning_theme = any(
+        "product positioning" in (f.get("impact") or "").lower() for f in overlap
+    )
+    cluster_product_high = any(
+        f.get("type") == "product" and f.get("priority") == "HIGH" for f in dup_findings
+    )
+    product_executive = (
+        product_conflict_high
+        or product_positioning_theme
+        or cluster_product_high
+    )
 
-    if product_conflict_high:
+    if product_executive:
         lines.append(
             "- Product positioning overlap detected, which may impact conversion "
             "and customer clarity"
         )
 
-    if high_n > 0 and not product_conflict_high:
+    if high_n > 0 and not product_executive:
         if any("SEO authority" in f.get("impact", "") for f in overlap):
             lines.append(
                 f"- {high_n} high-priority content conflicts impacting SEO "

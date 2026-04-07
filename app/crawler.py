@@ -24,21 +24,52 @@ def extract_text(html):
 
 
 def classify_page(url: str, text: str) -> str:
-    u = url.lower()
+    url_lower = url.lower()
     t = text.lower()
+    word_count = len(text.split())
+
+    # STRONG PRODUCT SIGNALS (override everything else)
+    if any(
+        x in url_lower
+        for x in [
+            "/our-policies",
+            "/policies",
+            "/plans",
+            "/insurance",
+            "/cover",
+        ]
+    ):
+        return "product"
 
     # Strong URL signals
-    if "faq" in u:
+    if "faq" in url_lower:
         return "faq"
-    if "policy" in u or "cover" in u or "insurance" in u:
+    if "policy" in url_lower or "cover" in url_lower or "insurance" in url_lower:
         return "product"
-    if "help" in u or "support" in u or "contact" in u:
+    if "help" in url_lower or "support" in url_lower or "contact" in url_lower:
         return "support"
-    if "about" in u or "careers" in u:
+    if "about" in url_lower or "careers" in url_lower:
         return "brand"
 
-    # Content-based signals
-    if "what is" in t[:500] or "how does" in t[:500]:
+    product_keywords = [
+        "coverage",
+        "premium",
+        "claim",
+        "benefit",
+        "excess",
+        "deductible",
+        "policy",
+        "included",
+        "exclusion",
+    ]
+    if sum(1 for kw in product_keywords if kw in t) >= 3:
+        return "product"
+
+    # Content-based guide (stricter)
+    if (
+        ("what is" in t[:500] or "how does" in t[:500])
+        and word_count > 800
+    ):
         return "guide"
 
     if "we are" in t[:300] or "our mission" in t[:300]:
@@ -46,9 +77,6 @@ def classify_page(url: str, text: str) -> str:
 
     if "claim" in t and "policy" in t:
         return "product"
-
-    # Length-based fallback
-    word_count = len(text.split())
 
     if word_count > 1000:
         return "guide"
@@ -88,13 +116,15 @@ def crawl_site(base_url, max_pages=20):
 
         path = url.replace(base_url, "")
         word_count = len(text.split())
+        page_type = classify_page(url, text)
+        print(f"CLASSIFIED: {url} → {page_type}")
         page = {
             "url": url,
             "path": path,
             "domain": get_domain(url),
             "text": text,
             "word_count": word_count,
-            "type": classify_page(url, text),
+            "type": page_type,
             "content": text,
         }
         pages.append(page)
