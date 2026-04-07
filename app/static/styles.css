@@ -1,0 +1,72 @@
+.info-tooltip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+  font-size: 14px;
+  margin-left: 6px;
+  color: #6b7280;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.info-tooltip:hover .tooltip-content,
+.info-tooltip:focus .tooltip-content {
+  display: block;
+}
+
+.info-tooltip:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.tooltip-content {
+  display: none;
+  position: absolute;
+  top: 20px;
+  left: 0;
+  width: 260px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 10px 12px;
+  border-radius: 6px;
+  z-index: 100;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+}
+
+/* Benchmarked metric cards (overlap_rate) */
+.metric-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metric-badge.critical {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.metric-badge.high {
+  background: #9a3412;
+  color: #ffedd5;
+}
+
+.metric-badge.moderate {
+  background: #854d0e;
+  color: #fef9c3;
+}
+
+.metric-badge.low {
+  background: #14532d;
+  color: #dcfce7;
+}

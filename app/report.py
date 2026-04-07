@@ -1,5 +1,40 @@
 from html import escape
 
+from app.scoring.benchmarks import classify_overlap_rate, get_scoring_weights
+
+# Tooltip copy for key metrics only (keeps total report tooltips intentional; ~6 max).
+_METRIC_TOOLTIPS = {
+    "overlap_rate": (
+        "Percent of pages that exist in duplication or overlap clusters. "
+        "High values mean your site structure is competing with itself."
+    ),
+    "avg_cluster_similarity": (
+        "How similar pages are within clusters. Values near 1.0 indicate near-identical "
+        "content competing for the same intent."
+    ),
+    "content_uniqueness_score": (
+        "Inverse of similarity. Low scores mean your pages are not differentiated enough "
+        "to rank independently."
+    ),
+}
+
+
+def _safe_float(x) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def render_tooltip(text: str) -> str:
+    """Small inline help icon; `text` is HTML-escaped. Use only on section/metric headers."""
+    t = escape(text)
+    return (
+        '<span class="info-tooltip" tabindex="0" role="button" aria-label="More information">ⓘ'
+        f'<span class="tooltip-content">{t}</span></span>'
+    )
+
+
 _WRAPPER = (
     'style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; '
     "max-width: 920px; line-height: 1.55; color: #1a1a1a; padding: 28px 32px; "
@@ -54,10 +89,13 @@ def render_technical_seo_fixes(esc, clusters: list) -> str:
             "</div>"
         )
     body = "".join(cards)
+    tech_h2 = (
+        f'{esc("Technical SEO fixes")}'
+        f'{render_tooltip("These are structural URL issues (canonical, slash, hostname variants). These do not require content changes and should be fixed first.")}'
+    )
     return (
         f"<div {_SECTION}>"
-        f'<h2 style="margin: 0 0 12px 0; font-size: 1.2rem;">'
-        f'{esc("Technical SEO fixes")}</h2>'
+        f'<h2 style="margin: 0 0 12px 0; font-size: 1.2rem;">{tech_h2}</h2>'
         f'<p style="margin: 0 0 14px 0; color: #5c6370; font-size: 0.92rem;">'
         f"{esc('Canonical duplicates, trailing-slash or hostname variants, and homepage aliases—not content strategy items.')}</p>"
         f"{body}"
@@ -104,6 +142,74 @@ def render_methodology() -> str:
     )
 
 
+def _overlap_rate_metric_block(esc, row: dict, fallback_metrics: dict) -> str:
+    raw_v = row.get("value", "")
+    v = _safe_float(raw_v)
+    if v == 0.0 and fallback_metrics:
+        v = _safe_float(fallback_metrics.get("overlap_rate"))
+    level, benchmark = classify_overlap_rate(v)
+    badge_class = level.lower().replace(" ", "-")
+    label_line = esc("overlap_rate") + render_tooltip(_METRIC_TOOLTIPS["overlap_rate"])
+    implication = esc(str(row.get("implication", "")))
+    display_val = str(raw_v).strip() if str(raw_v).strip() != "" else str(v)
+    return (
+        '<div class="metric" style="margin-bottom: 14px; padding: 14px 16px; background: #fff; '
+        'border: 1px solid #e4e7ec; border-radius: 8px;">'
+        '<div class="metric-header" style="display: flex; align-items: center; flex-wrap: wrap; '
+        'gap: 8px; margin-bottom: 6px; font-size: 0.72rem; text-transform: uppercase; color: #868e96;">'
+        f"{label_line}"
+        f'<span class="metric-badge {esc(badge_class)}">{esc(level)}</span>'
+        "</div>"
+        f'<div class="metric-value" style="font-size: 1.2rem; font-weight: 700;">{esc(display_val)}</div>'
+        '<div class="metric-context" style="margin-top: 6px; font-size: 0.92rem; color: #495057;">'
+        f"{esc(benchmark)} — {esc('high duplication footprint')}"
+        "</div>"
+        f'<p style="margin: 10px 0 0 0; font-size: 0.92rem; color: #343a40;">'
+        f'<strong>{esc("Why it matters")}:</strong> {implication}</p>'
+        "</div>"
+    )
+
+
+def _decision_frame_block(esc, ai: dict, metrics: dict) -> str:
+    conf = (ai.get("confidence") or "").strip()
+    primary = (ai.get("core_problem") or "").strip()
+    secondary = (ai.get("secondary_issue") or "").strip()
+    overlap = _safe_float(metrics.get("overlap_rate"))
+    weights = get_scoring_weights()
+    parts_inner = []
+    if conf:
+        parts_inner.append(
+            f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
+            f"<strong>{esc('Decision confidence:')}</strong> {esc(conf)}</p>"
+        )
+    if primary:
+        parts_inner.append(
+            f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
+            f"<strong>{esc('Primary issue:')}</strong> {esc(primary)}</p>"
+        )
+    if secondary:
+        parts_inner.append(
+            f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
+            f"<strong>{esc('Secondary issue:')}</strong> {esc(secondary)}</p>"
+        )
+    if overlap > 0.45:
+        pillar = "Content Quality"
+        pct = int(round(weights.get("Content Quality", 0.25) * 100))
+        parts_inner.append(
+            f'<p style="margin: 0; font-size: 0.95rem;">'
+            f"<strong>{esc('Primary impact area:')}</strong> {esc(pillar)} "
+            f"({pct}% {esc('of total score weight')})</p>"
+        )
+    if not parts_inner:
+        return ""
+    return (
+        '<div class="decision-frame" style="margin-bottom: 24px; padding: 18px 20px; '
+        "background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 10px;\">"
+        f'{"".join(parts_inner)}'
+        "</div>"
+    )
+
+
 def _score_color(label: str) -> str:
     return {
         "Strong": "#5cb85c",
@@ -114,6 +220,7 @@ def _score_color(label: str) -> str:
 
 
 def _metrics_explained_table(esc, rows: list, fallback_metrics: dict) -> str:
+    rows = [r for r in (rows or []) if isinstance(r, dict)]
     if not rows and fallback_metrics:
         rows = [
             {
@@ -132,15 +239,31 @@ def _metrics_explained_table(esc, rows: list, fallback_metrics: dict) -> str:
                 "implication": "Higher means more distinct copy between competing URLs.",
             },
         ]
+    elif fallback_metrics and not any(
+        str(r.get("metric", "")) == "overlap_rate" for r in rows
+    ):
+        rows.insert(
+            0,
+            {
+                "metric": "overlap_rate",
+                "value": str(fallback_metrics.get("overlap_rate", "")),
+                "implication": "Share of pages touched by overlap signals.",
+            },
+        )
     inner = []
-    for row in rows or []:
-        if not isinstance(row, dict):
+    for row in rows:
+        mkey = str(row.get("metric", ""))
+        if mkey == "overlap_rate":
+            inner.append(_overlap_rate_metric_block(esc, row, fallback_metrics))
             continue
+        label_line = esc(mkey)
+        if mkey in _METRIC_TOOLTIPS:
+            label_line += render_tooltip(_METRIC_TOOLTIPS[mkey])
         inner.append(
             '<div style="margin-bottom: 14px; padding: 14px 16px; background: #fff; '
             'border: 1px solid #e4e7ec; border-radius: 8px;">'
             f'<p style="margin: 0 0 4px 0; font-size: 0.72rem; text-transform: uppercase; '
-            f'color: #868e96;">{esc(str(row.get("metric", "")))}</p>'
+            f'color: #868e96;">{label_line}</p>'
             f'<p style="margin: 0 0 8px 0; font-size: 1.2rem; font-weight: 700;">'
             f'{esc(str(row.get("value", "")))}</p>'
             f'<p style="margin: 0; font-size: 0.92rem; color: #343a40;">'
@@ -206,7 +329,7 @@ def generate_report(
     parts = [
         f"<div {_WRAPPER}>",
         '<h1 style="margin: 0 0 6px 0; font-size: 1.85rem; font-weight: 800;">'
-        f'{esc("Site audit")}</h1>',
+        f'{esc("Sites audit")}</h1>',
         '<p style="margin: 0 0 20px 0; color: #5c6370; font-size: 0.95rem;">'
         f"{esc('POV backed by URLs and metrics — execution sequenced below.')}</p>",
     ]
@@ -226,6 +349,8 @@ def generate_report(
         "</div>"
     )
 
+    parts.append(_decision_frame_block(esc, ai, metrics))
+
     # Key metrics (interpreted)
     parts.append(f"<div {_SECTION}>")
     parts.append(
@@ -239,9 +364,13 @@ def generate_report(
     parts.append("</div>")
 
     # Core analysis
+    core_h2 = (
+        f'{esc("Core analysis")}'
+        f'{render_tooltip("Narrative interpretation of the verdict, root problem, business impact, and risk of inaction—grounded in this crawl’s clusters and metrics.")}'
+    )
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 16px 0; font-size: 1.2rem;">{esc("Core analysis")}</h2>'
+        f'<h2 style="margin: 0 0 16px 0; font-size: 1.2rem;">{core_h2}</h2>'
     )
     parts.append(_core_block(esc, "Core problem", ai.get("core_problem", "")))
     parts.append(_core_block(esc, "Recommendation", ai.get("recommendation", "")))
@@ -251,10 +380,13 @@ def generate_report(
     parts.append("</div>")
 
     # 30-day roadmap
+    exec_h2 = (
+        f'{esc("30-day execution plan")}'
+        f'{render_tooltip("Ordered, assignable actions (merge, redirect, differentiate, etc.). Each step should be verifiable in staging before release.")}'
+    )
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
-        f'{esc("30-day execution plan")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{exec_h2}</h2>'
     )
     parts.append(
         '<p style="margin: 0 0 16px 0; color: #5c6370; font-size: 0.92rem;">'

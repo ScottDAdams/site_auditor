@@ -7,6 +7,7 @@ load_dotenv()
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -29,6 +30,7 @@ from app.ai_insights import (
     build_fallback_insights,
     build_fallback_roadmap,
     compute_audit_metrics,
+    enrich_insights_decision_layer,
     finalize_roadmap,
     generate_ai_insights,
     generate_execution_roadmap,
@@ -57,6 +59,10 @@ def _filter_roadmap_equivalent_targets(roadmap_obj: dict | None) -> dict:
     return {**roadmap_obj, "roadmap": valid}
 
 app = FastAPI()
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 FAVICON_PATH = Path(__file__).resolve().parent.parent / "templates" / "favicon.ico"
 
@@ -266,6 +272,8 @@ def run_audit(sites: str = Form(...)):
 
     execution_roadmap = _filter_roadmap_equivalent_targets(execution_roadmap)
     execution_roadmap = finalize_roadmap(execution_roadmap)
+
+    ai_insights = enrich_insights_decision_layer(ai_insights, analysis_payload)
 
     report = generate_report(
         all_findings,

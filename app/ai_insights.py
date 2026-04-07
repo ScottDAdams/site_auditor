@@ -515,6 +515,92 @@ def _strategic_cluster_rows(payload: dict) -> list:
     ]
 
 
+def estimate_visibility_loss(overlap_rate: float) -> str:
+    if overlap_rate >= 0.5:
+        return "30–50%"
+    elif overlap_rate >= 0.4:
+        return "20–35%"
+    elif overlap_rate >= 0.3:
+        return "10–25%"
+    return "<10%"
+
+
+def calculate_confidence(cluster_count: int, avg_similarity: float) -> str:
+    if cluster_count >= 5 and avg_similarity > 0.9:
+        return "High"
+    elif cluster_count >= 3:
+        return "Medium"
+    return "Low"
+
+
+def detect_secondary_issue(payload: dict) -> str:
+    """Heuristic second narrative thread for the decision summary (distinct from core_problem)."""
+    summary = payload.get("summary") or {}
+    m = payload.get("metrics") or {}
+    try:
+        avg_sim = float(m.get("avg_cluster_similarity", 0))
+    except (TypeError, ValueError):
+        avg_sim = 0.0
+    tech_n = len(payload.get("technical_fix_urls") or [])
+    high_issues = int(summary.get("high_issues", 0))
+
+    if tech_n >= 3:
+        return (
+            "Technical URL variants (canonical, slash, hostname) are splitting crawl signals "
+            "across duplicate routes—normalize before scaling content work."
+        )
+    if avg_sim >= 0.92:
+        return (
+            "Within-cluster embeddings are extremely tight; copy and layout differentiation "
+            "are the main levers left while keeping required URLs live."
+        )
+    if high_issues >= 2:
+        return (
+            "Multiple high-severity duplication findings compete for remediation priority—"
+            "sequence fixes by traffic and revenue impact."
+        )
+    try:
+        uniq = float(m.get("content_uniqueness_score", 1) or 1)
+    except (TypeError, ValueError):
+        uniq = 1.0
+    if uniq < 0.35:
+        return (
+            "Low content-uniqueness scores indicate overlapping narratives; tighten one primary "
+            "intent per URL before adding net-new pages."
+        )
+    return (
+        "Cross-page intent boundaries need tightening so each URL owns one primary conversion path."
+    )
+
+
+def enrich_insights_decision_layer(insights: dict | None, payload: dict) -> dict:
+    """
+    Post-process insights: visibility loss line on business_impact, model confidence,
+    and secondary issue string for the report.
+    """
+    out = dict(insights or {})
+    m = payload.get("metrics") or {}
+    try:
+        overlap = float(m.get("overlap_rate", 0))
+    except (TypeError, ValueError):
+        overlap = 0.0
+    loss = estimate_visibility_loss(overlap)
+    loss_line = (
+        f"{loss} of organic visibility is likely diluted across competing pages, "
+        "reducing conversion clarity and ranking strength."
+    )
+    bi = (out.get("business_impact") or "").strip()
+    out["business_impact"] = f"{loss_line} {bi}".strip() if bi else loss_line
+
+    try:
+        avg_sim = float(m.get("avg_cluster_similarity", 0))
+    except (TypeError, ValueError):
+        avg_sim = 0.0
+    out["confidence"] = calculate_confidence(len(_strategic_cluster_rows(payload)), avg_sim)
+    out["secondary_issue"] = detect_secondary_issue(payload)
+    return out
+
+
 def _first_urls_from_payload(payload: dict, limit: int = 8):
     """URLs from strategic clusters only — no grouped_issues or page_urls (avoids contamination)."""
     urls = []
