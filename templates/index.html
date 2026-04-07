@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Site Auditor</title>
+</head>
+<body>
+    <h1>Site Auditor</h1>
+
+    <form action="/run-audit" method="post">
+        <input type="text" name="sites" placeholder="example.com, example.co.nz" style="width:400px;" />
+        <button type="submit">Run Audit</button>
+    </form>
+
+    <h2>Status: {{ state.status }}</h2>
+
+    {% if state.clusters %}
+        <h3>Duplicate Clusters</h3>
+        <ul>
+        {% for cluster in state.clusters %}
+            <li>
+                Similarity: {{ cluster.similarity }}
+                <ul>
+                    {% for page in cluster.pages %}
+                        <li>{{ page.url }}</li>
+                    {% endfor %}
+                </ul>
+            </li>
+        {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if state.report %}
+        <h3>Report</h3>
+        <pre>{{ state.report }}</pre>
+    {% endif %}
+</body>
+</html>
