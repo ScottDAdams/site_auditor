@@ -17,6 +17,7 @@ def default_allowed_actions() -> dict:
         "rewrite": True,
         "differentiate": True,
         "reposition": True,
+        "none": True,
     }
 
 
@@ -156,6 +157,9 @@ def roadmap_step_allowed(step: dict, bc: dict | None) -> bool:
     urls = step.get("target_urls") or []
     if not isinstance(urls, list):
         return False
+
+    if at == "none":
+        return True
 
     if at == "delete":
         for u in urls:

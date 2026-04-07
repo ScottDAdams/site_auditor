@@ -22,7 +22,47 @@ _FINDING_CARD = (
 ACTION_TYPE_HINTS = {
     "differentiate": "Clarify positioning between pages",
     "reposition": "Adjust intent targeting",
+    "none": "No structural content change in this step",
 }
+
+
+def render_technical_seo_fixes(esc, clusters: list) -> str:
+    technical = [
+        c
+        for c in (clusters or [])
+        if c.get("decision_type") == "technical_fix"
+    ]
+    if not technical:
+        return ""
+    cards = []
+    for c in technical:
+        urls = [p.get("url") for p in c.get("pages", []) if p.get("url")]
+        issue = c.get("technical_issue") or "canonical duplication"
+        fix = c.get("technical_fix_recommendation") or (
+            "301 redirect + rel=canonical on duplicate URLs"
+        )
+        ulist = "".join(f"<li>{esc(u)}</li>" for u in urls[:12])
+        cards.append(
+            '<div style="border: 1px solid #cfe2ff; padding: 14px 16px; margin-bottom: 12px; '
+            'background: #f8fbff; border-radius: 8px;">'
+            f'<p style="margin: 0 0 8px 0; font-weight: 700;">{esc("URLs")}</p>'
+            f'<ul style="margin: 0 0 10px 0;">{ulist}</ul>'
+            f'<p style="margin: 0 0 6px 0; font-size: 0.92rem;"><strong>{esc("Issue:")}</strong> '
+            f"{esc(issue)}</p>"
+            f'<p style="margin: 0; font-size: 0.92rem;"><strong>{esc("Fix:")}</strong> '
+            f"{esc(fix)}</p>"
+            "</div>"
+        )
+    body = "".join(cards)
+    return (
+        f"<div {_SECTION}>"
+        f'<h2 style="margin: 0 0 12px 0; font-size: 1.2rem;">'
+        f'{esc("Technical SEO fixes")}</h2>'
+        f'<p style="margin: 0 0 14px 0; color: #5c6370; font-size: 0.92rem;">'
+        f"{esc('Canonical duplicates, trailing-slash or hostname variants, and homepage aliases—not content strategy items.')}</p>"
+        f"{body}"
+        "</div>"
+    )
 
 
 def render_methodology() -> str:
@@ -172,6 +212,7 @@ def generate_report(
     ]
 
     parts.append(render_methodology())
+    parts.append(render_technical_seo_fixes(esc, clusters))
 
     # Verdict
     verdict = ai.get("verdict") or "No verdict available."
