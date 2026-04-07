@@ -4,17 +4,21 @@ def _executive_insights_lines(findings):
     med_n = sum(1 for f in findings if f.get("priority") == "MEDIUM")
     overlap = [f for f in findings if f.get("type") == "topic_overlap"]
     any_cross = any(f.get("cross_market") for f in findings)
-    product_positioning = any(
-        "Product pages overlap" in f.get("action", "") for f in overlap
+
+    product_conflict_high = any(
+        f.get("priority") == "HIGH"
+        and "product" in (f.get("overlap_types") or [])
+        for f in overlap
     )
 
-    if high_n > 0:
-        if any("plans" in f.get("impact", "") for f in overlap):
-            lines.append(
-                f"- {high_n} high-priority content conflicts impacting product "
-                "clarity and conversion"
-            )
-        elif any("SEO authority" in f.get("impact", "") for f in overlap):
+    if product_conflict_high:
+        lines.append(
+            "- Product positioning overlap detected, which may impact conversion "
+            "and customer clarity"
+        )
+
+    if high_n > 0 and not product_conflict_high:
+        if any("SEO authority" in f.get("impact", "") for f in overlap):
             lines.append(
                 f"- {high_n} high-priority content conflicts impacting SEO "
                 "authority and AI visibility"
@@ -29,12 +33,6 @@ def _executive_insights_lines(findings):
         lines.append(
             "- Cross-market duplication reduces localization effectiveness "
             "between AU and NZ"
-        )
-
-    if product_positioning:
-        lines.append(
-            "- Product pages show overlapping positioning, which may confuse "
-            "customer decision-making"
         )
 
     if high_n == 0 and (med_n > 0 or len(findings) > 0):

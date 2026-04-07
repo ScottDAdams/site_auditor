@@ -184,24 +184,30 @@ def detect_topic_overlap(pages, embeddings, clusters, threshold=0.85):
 
 
 def get_impact(types, cross_market):
-    if "product" in types:
+    types_set = set(types)
+
+    # 1. PRODUCT CONFLICT (highest priority)
+    if "product" in types_set:
         return (
-            "This overlap can confuse users comparing plans, "
-            "reduce conversion clarity, and weaken product positioning."
+            "These pages overlap in product positioning, which can confuse users choosing between plans, "
+            "reduce conversion clarity, and weaken differentiation between offerings."
         )
 
-    if "guide" in types:
+    # 2. CROSS-MARKET DUPLICATION
+    if cross_market:
+        return (
+            "This reduces localization effectiveness and may signal duplicate content across regions, "
+            "weakening regional relevance."
+        )
+
+    # 3. GUIDE / SEO IMPACT
+    if "guide" in types_set:
         return (
             "This overlap can dilute SEO authority, create keyword cannibalization, "
             "and reduce visibility in AI-driven search results."
         )
 
-    if cross_market:
-        return (
-            "This reduces localization effectiveness and may signal duplicate content "
-            "to search engines across regions."
-        )
-
+    # 4. DEFAULT
     return (
         "This may create redundant content and reduce overall site clarity."
     )
@@ -223,24 +229,18 @@ def analyze_overlaps(overlaps):
         cross_market = o["domain_1"] != o["domain_2"]
         types = [o["type_1"], o["type_2"]]
 
-        if "guide" in types:
+        if types.count("product") == 2:
             priority = "HIGH"
             action = (
-                "These pages compete for the same informational intent. "
-                "Consolidate or differentiate."
+                "Clarify positioning between these product offerings "
+                "(coverage, audience, use case)."
             )
-        elif types.count("product") == 2:
+        elif "guide" in types:
             priority = "HIGH"
-            action = (
-                "Product pages overlap in positioning. Clarify differences in "
-                "coverage, audience, or use case."
-            )
+            action = "Consolidate or clearly differentiate these informational pages."
         elif cross_market and o["similarity"] > 0.90:
             priority = "HIGH"
-            action = (
-                "Cross-market pages are too similar. Localize content for AU vs "
-                "NZ audiences."
-            )
+            action = "Localize content to better differentiate AU vs NZ audiences."
         else:
             priority = "MEDIUM"
             action = "Review for overlapping intent"
@@ -256,6 +256,7 @@ def analyze_overlaps(overlaps):
                 "similarity": o["similarity"],
                 "pages": [o["url_1"], o["url_2"]],
                 "cross_market": cross_market,
+                "overlap_types": types,
             }
         )
 
