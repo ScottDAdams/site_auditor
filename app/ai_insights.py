@@ -11,14 +11,87 @@ from app.business_context import (
     roadmap_step_allowed,
     url_requires_preservation,
 )
-from app.utils import normalize_url
+from app.utils import canonicalize_url
 
 
 def safe_pair(a: str, b: str) -> bool:
-    """True if two URLs are different resources after normalization (safe for merge/redirect copy)."""
-    if not a or not b:
+    """True if two URLs are different resources after canonicalization (safe for merge/redirect copy)."""
+    return bool(
+        a and b and canonicalize_url(str(a)) != canonicalize_url(str(b))
+    )
+
+
+def _technical_fix_canonical_set(payload: dict) -> set[str]:
+    raw = payload.get("technical_fix_urls")
+    if not isinstance(raw, list):
+        return set()
+    return {canonicalize_url(str(u)) for u in raw if u}
+
+
+def _url_allowed_for_strategic(u: str, payload: dict) -> bool:
+    if not u:
         return False
-    return normalize_url(a) != normalize_url(b)
+    return canonicalize_url(str(u)) not in _technical_fix_canonical_set(payload)
+
+
+def _dedupe_steps_by_targets(steps: list) -> list:
+    seen = set()
+    deduped = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        urls = tuple(
+            sorted(
+                canonicalize_url(str(u))
+                for u in (step.get("target_urls") or [])
+                if u
+            )
+        )
+        if urls in seen:
+            continue
+        seen.add(urls)
+        deduped.append(step)
+    return deduped
+
+
+def _no_duplicate_targets_across_steps(steps: list) -> bool:
+    seen = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        for url in step.get("target_urls") or []:
+            cu = canonicalize_url(str(url))
+            if not cu:
+                continue
+            if cu in seen:
+                return False
+            seen.add(cu)
+    return True
+
+
+def _collapse_to_single_best_step(steps: list) -> list:
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        tu = s.get("target_urls") or []
+        if len(tu) >= 2 and safe_pair(str(tu[0]), str(tu[1])):
+            return [{**s, "step": 1}]
+    if steps and isinstance(steps[0], dict):
+        return [{**steps[0], "step": 1}]
+    return []
+
+
+def finalize_roadmap(roadmap_obj: dict | None) -> dict:
+    """Dedupe steps by canonical target multiset; collapse if any URL is targeted in more than one step."""
+    if not roadmap_obj or not isinstance(roadmap_obj, dict):
+        return roadmap_obj or {"roadmap": []}
+    steps = [s for s in (roadmap_obj.get("roadmap") or []) if isinstance(s, dict)]
+    steps = _dedupe_steps_by_targets(steps)
+    if not _no_duplicate_targets_across_steps(steps):
+        steps = _collapse_to_single_best_step(steps)
+    for i, s in enumerate(steps, start=1):
+        s["step"] = i
+    return {**roadmap_obj, "roadmap": steps}
 
 BANNED_VERBS_RE = re.compile(
     r"\b(improve|optimi[sz]e|enhance|refine|strengthen|align)\b",
@@ -219,7 +292,7 @@ Create a 30-day execution plan: 3 to 5 steps, ordered by impact.
 
 Each step MUST:
 - set action_type to exactly one of: merge, redirect, delete, consolidate, split, rewrite, differentiate, reposition, none
-- target_urls[0] and target_urls[1] MUST NOT normalize to the same URL when both are present (distinct destinations only)
+- target_urls[0] and target_urls[1] MUST NOT canonicalize to the same URL when both are present (distinct destinations only)
 - obey business_context.allowed_actions (only use action types set to true)
 - NEVER use delete on protected_paths or core_product URLs; NEVER merge/redirect across regions when separate_regions is true
 - include target_urls with at least one real https URL from the payload
@@ -424,7 +497,7 @@ def validate_roadmap_output(obj, business_context: dict | None = None) -> bool:
             return False
         turls = x.get("target_urls") or []
         if isinstance(turls, list) and len(turls) >= 2:
-            if normalize_url(str(turls[0])) == normalize_url(str(turls[1])):
+            if canonicalize_url(str(turls[0])) == canonicalize_url(str(turls[1])):
                 return False
         if not roadmap_step_allowed(x, bc):
             return False
@@ -465,6 +538,9 @@ def _first_urls_from_payload(payload: dict, limit: int = 8):
             out.append(u)
         if len(out) >= limit:
             break
+    blocked = _technical_fix_canonical_set(payload)
+    if blocked:
+        out = [u for u in out if canonicalize_url(str(u)) not in blocked]
     return out
 
 
@@ -480,7 +556,11 @@ def _candidate_url_pairs(urls: list[str], max_urls: int = 10) -> list[tuple[str,
 def _fallback_insights_technical_variants_only(
     metrics_explained: list, m: dict, payload: dict
 ) -> dict:
-    pu = (payload.get("page_urls") or [])[:2]
+    pu = [
+        u
+        for u in (payload.get("page_urls") or [])[:8]
+        if _url_allowed_for_strategic(str(u), payload)
+    ][:2]
     ev_urls = pu if len(pu) >= 2 else (pu + ["https://127.0.0.1/"])[:2]
     return {
         "verdict": "No strategic content conflicts detected after normalization.",
@@ -568,15 +648,14 @@ def build_fallback_insights(payload: dict) -> dict:
         },
     ]
 
-    clusters_strategic = [
-        c for c in (payload.get("clusters") or []) if c.get("decision_type") == "strategic"
-    ]
-    if payload.get("strategic_clusters"):
-        clusters_strategic = list(payload["strategic_clusters"])
+    clusters_strategic = _strategic_cluster_rows(payload)
 
     urls_pool = _first_urls_from_payload(payload, 12)
     candidate_pairs = _candidate_url_pairs(urls_pool, 12)
     safe_pairs = [(a, b) for (a, b) in candidate_pairs if safe_pair(a, b)]
+
+    print("STRATEGIC URLS:", urls_pool)
+    print("SAFE PAIRS:", safe_pairs)
 
     if not clusters_strategic or not safe_pairs:
         return _fallback_insights_technical_variants_only(metrics_explained, m, payload)
@@ -788,7 +867,7 @@ def _fallback_page_changes_reposition_one(u: str, peer: str | None = None) -> li
 
 def build_fallback_roadmap(payload: dict) -> dict:
     if not _strategic_cluster_rows(payload):
-        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+        return finalize_roadmap({"roadmap": [_default_no_consolidation_roadmap_step()]})
 
     bc = payload.get("business_context") or {}
     allowed = effective_allowed_actions(bc)
@@ -796,12 +875,12 @@ def build_fallback_roadmap(payload: dict) -> dict:
 
     urls = _first_urls_from_payload(payload, 12)
     if not urls:
-        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+        return finalize_roadmap({"roadmap": [_default_no_consolidation_roadmap_step()]})
 
     candidate_pairs = _candidate_url_pairs(urls, 12)
     safe_pairs = [(a, b) for (a, b) in candidate_pairs if safe_pair(a, b)]
     if not safe_pairs:
-        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+        return finalize_roadmap({"roadmap": [_default_no_consolidation_roadmap_step()]})
 
     u0, u1 = safe_pairs[0]
     u2 = None
@@ -817,7 +896,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
     def push(step: dict) -> bool:
         turls = step.get("target_urls") or []
         if isinstance(turls, list) and len(turls) >= 2:
-            if normalize_url(str(turls[0])) == normalize_url(str(turls[1])):
+            if canonicalize_url(str(turls[0])) == canonicalize_url(str(turls[1])):
                 return False
         step = {**step, "step": len(steps) + 1}
         if roadmap_step_allowed(step, bc):
@@ -835,7 +914,7 @@ def build_fallback_roadmap(payload: dict) -> dict:
         page_changes: list | None = None,
     ) -> bool:
         if len(targets) >= 2:
-            if normalize_url(str(targets[0])) == normalize_url(str(targets[1])):
+            if canonicalize_url(str(targets[0])) == canonicalize_url(str(targets[1])):
                 return False
         if not allowed.get(primary, False):
             return False
@@ -965,9 +1044,9 @@ def build_fallback_roadmap(payload: dict) -> dict:
         )
 
     if not steps:
-        return {"roadmap": [_default_no_consolidation_roadmap_step()]}
+        return finalize_roadmap({"roadmap": [_default_no_consolidation_roadmap_step()]})
 
     out = steps[:5]
     for i, s in enumerate(out, start=1):
         s["step"] = i
-    return {"roadmap": out}
+    return finalize_roadmap({"roadmap": out})

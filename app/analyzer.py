@@ -2,12 +2,7 @@ from urllib.parse import urlparse
 
 from sklearn.metrics.pairwise import cosine_similarity
 
-from app.utils import (
-    canonical_resource_key,
-    infer_technical_issue,
-    normalize_url,
-    urls_equivalent,
-)
+from app.utils import canonicalize_url, infer_technical_issue, urls_equivalent
 
 
 def is_homepage(url: str) -> bool:
@@ -140,19 +135,12 @@ def classify_cluster_decisions(clusters):
             cluster["technical_issue"] = None
             cluster["technical_fix_recommendation"] = None
             continue
-        norms = {normalize_url(u) for u in urls}
-        ckeys = {canonical_resource_key(u) for u in urls}
+        norms = {canonicalize_url(u) for u in urls}
         if len(norms) == 1:
             cluster["decision_type"] = "ignore"
             cluster["technical_issue"] = None
             cluster["technical_fix_recommendation"] = None
         elif len(distinct_urls) < 2:
-            cluster["decision_type"] = "technical_fix"
-            cluster["technical_issue"] = infer_technical_issue(urls)
-            cluster["technical_fix_recommendation"] = (
-                "301 redirect to one canonical URL + rel=canonical on duplicate URLs"
-            )
-        elif len(ckeys) == 1:
             cluster["decision_type"] = "technical_fix"
             cluster["technical_issue"] = infer_technical_issue(urls)
             cluster["technical_fix_recommendation"] = (

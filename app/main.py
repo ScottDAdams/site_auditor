@@ -29,6 +29,7 @@ from app.ai_insights import (
     build_fallback_insights,
     build_fallback_roadmap,
     compute_audit_metrics,
+    finalize_roadmap,
     generate_ai_insights,
     generate_execution_roadmap,
     validate_ai_output,
@@ -36,17 +37,19 @@ from app.ai_insights import (
 )
 from app.business_context import build_business_context
 from app.report import generate_report
-from app.utils import normalize_url
+from app.utils import canonicalize_url
 
 
 def _filter_roadmap_equivalent_targets(roadmap_obj: dict | None) -> dict:
-    """Drop roadmap steps whose first two targets normalize to the same URL."""
+    """Drop roadmap steps whose first two targets canonicalize to the same URL."""
     if not roadmap_obj or not isinstance(roadmap_obj, dict):
         return roadmap_obj or {"roadmap": []}
     valid = []
     for step in roadmap_obj.get("roadmap") or []:
         urls = step.get("target_urls") or []
-        if len(urls) >= 2 and normalize_url(str(urls[0])) == normalize_url(str(urls[1])):
+        if len(urls) >= 2 and canonicalize_url(str(urls[0])) == canonicalize_url(
+            str(urls[1])
+        ):
             continue
         valid.append(step)
     for i, s in enumerate(valid, start=1):
@@ -180,6 +183,16 @@ def run_audit(sites: str = Form(...)):
     cluster_rows = [_cluster_payload_row(c) for c in clusters[:20]]
     strategic_rows = [r for r in cluster_rows if r.get("decision_type") == "strategic"]
 
+    technical_fix_urls: list[str] = []
+    for c in clusters:
+        if c.get("decision_type") != "technical_fix":
+            continue
+        for p in c.get("pages") or []:
+            u = p.get("url")
+            if u:
+                technical_fix_urls.append(u)
+    technical_fix_urls = list(dict.fromkeys(technical_fix_urls))
+
     analysis_payload = {
         "business_context": business_context,
         "summary": {
@@ -202,11 +215,13 @@ def run_audit(sites: str = Form(...)):
         "page_urls": [p["url"] for p in pages],
         "clusters": cluster_rows,
         "strategic_clusters": strategic_rows,
+        "technical_fix_urls": technical_fix_urls,
     }
 
     payload_for_ai = {
         **{k: v for k, v in analysis_payload.items() if k != "strategic_clusters"},
         "clusters": list(strategic_rows),
+        "technical_fix_urls": technical_fix_urls,
     }
 
     ai_insights = build_fallback_insights(analysis_payload)
@@ -250,6 +265,7 @@ def run_audit(sites: str = Form(...)):
             execution_roadmap = build_fallback_roadmap(analysis_payload)
 
     execution_roadmap = _filter_roadmap_equivalent_targets(execution_roadmap)
+    execution_roadmap = finalize_roadmap(execution_roadmap)
 
     report = generate_report(
         all_findings,
