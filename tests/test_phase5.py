@@ -6,6 +6,9 @@ from app.ai_insights import generate_ai_insights
 from app.ai_validator import validate_primary_action_matches_transformation_type
 from app.priority_scoring import assign_execution_order, compute_structural_priority
 from app.transformation_spec import build_transformation_spec, render_insights_from_spec
+from app.transformation_types import infer_transformation_type
+
+
 class DummyLLM:
     pass
 
@@ -93,6 +96,21 @@ class TestPhase5TransformationType(unittest.TestCase):
         self.assertTrue(spec["keep_both"])
         out = render_insights_from_spec(payload, "strategic", spec)
         self.assertIn("Restrict", out["primary_action"])
+
+    def test_cross_market_infer_wins_over_near_duplicate_merge(self):
+        payload = {
+            "dominant_problem_type": "strategic",
+            "business_context": {"market_context": {"separate_regions": True}},
+            "metrics": {
+                "overlap_rate": 0.5,
+                "avg_cluster_similarity": 0.94,
+                "content_uniqueness_score": 0.05,
+            },
+        }
+        tt = infer_transformation_type(
+            payload, "strategic", "cross_market", 2, row_similarity=0.94
+        )
+        self.assertEqual(tt, "differentiate")
 
     def test_validator_rejects_differentiate_word_for_merge_type(self):
         with self.assertRaises(ValueError) as ctx:

@@ -6,6 +6,8 @@ Used after two-pass insight generation merges with report shell fields.
 import re
 from urllib.parse import urlparse
 
+from app.decision_arbitration import validate_narrative_against_strategy
+
 BANNED_WORDS = [
     "clarify",
     "improve",
@@ -478,6 +480,7 @@ def validate_ai_output_strict(
     data,
     dominant_problem_type: str | None = None,
     conflict_context: dict | None = None,
+    primary_strategy: dict | None = None,
 ) -> bool:
     if not isinstance(data, dict):
         raise ValueError("Output must be a JSON object")
@@ -513,5 +516,18 @@ def validate_ai_output_strict(
         )
 
     validate_narrative_matches_transformation_spec(data)
+
+    blob = " ".join(
+        str(data.get(k) or "")
+        for k in (
+            "core_problem",
+            "primary_action",
+            "why_it_matters",
+            "execution_example",
+            "verdict",
+            "recommendation",
+        )
+    )
+    validate_narrative_against_strategy(blob, primary_strategy)
 
     return True

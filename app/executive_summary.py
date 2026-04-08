@@ -12,6 +12,8 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from app.analyzer import REMEDIATION_DECISION_TYPES
+from app.decision_arbitration import resolve_primary_strategy, validate_narrative_against_strategy
+from app.narrative_consolidation import build_consolidated_top_issues
 from app.opportunity_analysis import analyze_opportunities
 
 if TYPE_CHECKING:
@@ -334,6 +336,57 @@ def _risk_level_from_health(score: int, insights: dict, payload: dict) -> str:
     return "high"
 
 
+def _build_legacy_top_issues(
+    payload: dict,
+    insights: dict,
+    top_n: list[dict],
+    strategic: list[dict],
+    metrics: dict,
+) -> list[dict[str, Any]]:
+    """Per-cluster cards (pre Phase 10) when consolidation yields nothing."""
+    top_issues: list[dict[str, Any]] = []
+    for item in top_n:
+        idx = item.get("cluster_index")
+        row = None
+        if idx is not None and isinstance(idx, int) and 0 <= idx < len(strategic):
+            row = strategic[idx]
+        tt = str(item.get("transformation_type") or "differentiate").strip().lower()
+        urls = _collect_issue_urls(row)
+        if not urls and item.get("dominant_url"):
+            urls = [str(item["dominant_url"]).strip()]
+        ps = item.get("priority_score")
+        try:
+            ps_f = float(ps) if ps is not None else float(payload.get("priority_score") or 0)
+        except (TypeError, ValueError):
+            ps_f = 0.0
+        pl = str(item.get("priority_level") or payload.get("priority_level") or "medium")
+
+        decision = _decision_line(tt, urls)
+        why = _why_line(tt)
+        risk_if_ignored = _risk_if_ignored_line(tt)
+        outcome = map_action_to_outcome(tt)
+        business_consequence = map_problem_to_business_impact(tt, metrics)
+        problem_title = _problem_title(tt)
+        top_issues.append(
+            {
+                "problem": problem_title,
+                "impact": business_consequence,
+                "decision": decision,
+                "risk": risk_if_ignored,
+                "outcome": outcome,
+                "why": why,
+                "business_consequence": business_consequence,
+                "risk_if_ignored": risk_if_ignored,
+                "urls": urls,
+                "transformation_type": tt,
+                "priority_score": ps_f,
+                "priority_level": pl,
+                "recommended_action": decision,
+            }
+        )
+    return top_issues
+
+
 def _collect_issue_urls(row: dict | None) -> list[str]:
     if not row:
         return []
@@ -387,45 +440,24 @@ def build_executive_summary_data(payload: dict, insights: dict) -> dict[str, Any
             for i, r in enumerate(strategic[:5])
         ]
 
-    top_issues: list[dict[str, Any]] = []
-    for item in top_n:
-        idx = item.get("cluster_index")
-        row = None
-        if idx is not None and isinstance(idx, int) and 0 <= idx < len(strategic):
-            row = strategic[idx]
-        tt = str(item.get("transformation_type") or "differentiate").strip().lower()
-        urls = _collect_issue_urls(row)
-        if not urls and item.get("dominant_url"):
-            urls = [str(item["dominant_url"]).strip()]
-        ps = item.get("priority_score")
-        try:
-            ps_f = float(ps) if ps is not None else float(payload.get("priority_score") or 0)
-        except (TypeError, ValueError):
-            ps_f = 0.0
-        pl = str(item.get("priority_level") or payload.get("priority_level") or "medium")
+    opps_early = payload.get("opportunities")
+    if opps_early is None:
+        opps_early = analyze_opportunities(payload)
+    opps_early = opps_early[:3]
+    ps_early = payload.get("primary_strategy") or resolve_primary_strategy(
+        payload, insights, opps_early
+    )
 
-        decision = _decision_line(tt, urls)
-        why = _why_line(tt)
-        risk_if_ignored = _risk_if_ignored_line(tt)
-        outcome = map_action_to_outcome(tt)
-        business_consequence = map_problem_to_business_impact(tt, metrics)
-        problem_title = _problem_title(tt)
-        top_issues.append(
-            {
-                "problem": problem_title,
-                "impact": business_consequence,
-                "decision": decision,
-                "risk": risk_if_ignored,
-                "outcome": outcome,
-                "why": why,
-                "business_consequence": business_consequence,
-                "risk_if_ignored": risk_if_ignored,
-                "urls": urls,
-                "transformation_type": tt,
-                "priority_score": ps_f,
-                "priority_level": pl,
-                "recommended_action": decision,
-            }
+    findings = list(payload.get("audit_findings") or [])
+    top_issues = build_consolidated_top_issues(
+        payload,
+        ps_early,
+        findings,
+        max_issues=3,
+    )
+    if not top_issues:
+        top_issues = _build_legacy_top_issues(
+            payload, insights, top_n, strategic, metrics
         )
 
     summary_data: dict[str, Any] = {
@@ -447,7 +479,8 @@ def build_executive_summary_data(payload: dict, insights: dict) -> dict[str, Any
     summary_data["impact_estimate"] = estimate_impact(summary_data)
     summary_data["ceo_summary"] = build_ceo_summary_struct(len(top_issues))
     summary_data["expected_outcome"] = {"bullets": list(EXPECTED_OUTCOME_BULLETS)}
-    summary_data["opportunities"] = analyze_opportunities(payload)[:3]
+    summary_data["opportunities"] = opps_early
+    summary_data["primary_strategy"] = payload.get("primary_strategy") or ps_early
     return summary_data
 
 
@@ -493,10 +526,18 @@ def build_execution_plan(summary_data: dict) -> list[dict[str, Any]]:
         for iss in group[:4]:
             act = (iss.get("recommended_action") or "").strip()
             urls = iss.get("urls") or []
+            ck = str(iss.get("cluster_key") or "").strip()
+            prefix = (
+                f"{ck.replace('_', ' ').title()}: "
+                if ck
+                else ""
+            )
             if act:
-                actions.append(act)
+                actions.append(f"{prefix}{act}")
             elif urls:
-                actions.append(f"Address URLs: {', '.join(urls[:3])}")
+                actions.append(
+                    f"{prefix}Address URLs: {', '.join(urls[:3])}"
+                )
         actions = actions[:4]
         out0 = map_action_to_outcome(str(group[0].get("transformation_type") or ""))
         plan.append(
@@ -841,6 +882,10 @@ def validate_executive_output(
             if not str(imp.get(k) or "").strip():
                 raise ValueError(f"[rule:executive_impact_field] impact_estimate.{k} is required")
 
+        ps = summary_data.get("primary_strategy")
+        if isinstance(ps, dict) and str(ps.get("strategy") or "").strip():
+            validate_narrative_against_strategy(t, ps)
+
 
 def validate_executive_alignment(summary_data: dict) -> None:
     """Structured checks before render."""
@@ -901,3 +946,11 @@ def validate_executive_alignment(summary_data: dict) -> None:
     for k in ("impact_level", "confidence", "reasoning"):
         if not str(imp.get(k) or "").strip():
             raise ValueError(f"[rule:align_impact_field] impact_estimate.{k} required")
+
+    ps = summary_data.get("primary_strategy")
+    if not isinstance(ps, dict):
+        raise ValueError("[rule:summary_primary_strategy_shape] primary_strategy object required")
+    if not str(ps.get("strategy") or "").strip():
+        raise ValueError("[rule:summary_primary_strategy_key] primary_strategy.strategy required")
+    if not str(ps.get("label") or "").strip():
+        raise ValueError("[rule:summary_primary_strategy_label] primary_strategy.label required")

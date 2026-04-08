@@ -37,6 +37,16 @@
   <p class="card__muted report-narrow-muted">{{ es.impact_estimate.reasoning }}</p>
   {% endif %}
 
+  {% if es and es.primary_strategy %}
+  <section class="report-primary-strategy" aria-labelledby="primary-strategy-heading">
+    <h3 id="primary-strategy-heading" class="decision-brief__h">Primary strategy</h3>
+    <div class="report-primary-strategy__card">
+      <p class="report-primary-strategy__label">{{ es.primary_strategy.label }}</p>
+      <p class="report-primary-strategy__reason">{{ es.primary_strategy.reasoning }}</p>
+    </div>
+  </section>
+  {% endif %}
+
   <div class="decision-brief">
     {% if es and es.ceo_summary and es.ceo_summary.paragraphs %}
     <section class="decision-brief__section" aria-labelledby="ceo-summary-heading">
@@ -60,9 +70,15 @@
           <div class="decision-brief-issue-card__meta">
             {{ transformation_badge(issue.transformation_type) }}
             {{ priority_badge(issue.priority_level or 'medium') }}
+            {% if issue.cluster_key %}
+            <span class="decision-brief-issue-card__cluster">{{ issue.cluster_key | replace('_', ' ') }}</span>
+            {% endif %}
           </div>
           <div class="decision-brief-issue-card__slot">
-            <span class="decision-brief-issue-card__label">Problem</span>
+            <span class="decision-brief-issue-card__label">Core problem</span>
+            {% if issue.cluster_skim %}
+            <p class="decision-brief-issue-card__skim">{{ issue.cluster_skim }}</p>
+            {% endif %}
             <p class="decision-brief-issue-card__title">{{ issue.problem or issue.why }}</p>
           </div>
           <div class="decision-brief-issue-card__slot">
@@ -118,6 +134,18 @@
         <article class="decision-brief-opp-card">
           <p class="decision-brief-opp-card__meta"><span class="decision-brief-opp-card__type">{{ opp.type | replace('_', ' ') }}</span>{% if opp.confidence %} · {{ opp.confidence }} confidence{% endif %}</p>
           <h4 class="decision-brief-opp-card__title">{{ opp.title }}</h4>
+          {% if opp.lever %}
+          <div class="decision-brief-opp-card__slot">
+            <span class="decision-brief-issue-card__label">Lever</span>
+            <p class="decision-brief-opp-card__line">{{ opp.lever }}</p>
+          </div>
+          {% endif %}
+          {% if opp.mechanism %}
+          <div class="decision-brief-opp-card__slot">
+            <span class="decision-brief-issue-card__label">Mechanism</span>
+            <p class="decision-brief-opp-card__line">{{ opp.mechanism }}</p>
+          </div>
+          {% endif %}
           <div class="decision-brief-opp-card__slot">
             <span class="decision-brief-issue-card__label">Opportunity</span>
             <p class="decision-brief-opp-card__line">{{ opp.opportunity }}</p>

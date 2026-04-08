@@ -90,15 +90,17 @@ def infer_transformation_type(
     if dominant != "strategic":
         return "retain"
 
-    # Near-identical strategic pages → collapse
-    if avg_sim > 0.92 and cu < 0.1:
-        return "merge"
-
     bc = payload.get("business_context") or {}
     mc = bc.get("market_context") or {}
     separate = bool(mc.get("separate_regions"))
+    # Cross-market + distinct regions: differentiate before near-duplicate merge
+    # so AU/NZ mirrors are not told to collapse into one global page.
     if relationship == "cross_market" and separate:
         return "differentiate"
+
+    # Near-identical strategic pages in the same market → collapse
+    if avg_sim > 0.92 and cu < 0.1:
+        return "merge"
 
     if relationship == "intra_market" and sim > 0.85:
         return "isolate"

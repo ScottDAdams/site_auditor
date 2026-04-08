@@ -322,10 +322,11 @@
   color: var(--app-text);
 }
 
-/* Decision brief — structured blocks (not one text wall) */
+/* Decision brief — structured blocks (not one text wall).
+   Left-align with Primary strategy / metrics; do not center (margin: auto looked indented). */
 .decision-brief {
-  max-width: 38rem;
-  margin: 0 auto;
+  max-width: 42rem;
+  margin: 0;
 }
 
 .decision-brief__section {
@@ -363,7 +364,7 @@
 
 .decision-brief__legacy {
   max-width: 34rem;
-  margin: 0 auto;
+  margin: 0;
   line-height: 1.5;
 }
 
@@ -385,7 +386,27 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
   margin-bottom: 14px;
+}
+
+.decision-brief-issue-card__cluster {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--app-muted);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.decision-brief-issue-card__skim {
+  margin: 0 0 8px 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--app-text);
 }
 
 .decision-brief-issue-card__slot {
@@ -928,4 +949,31 @@ details.tech-details[open] summary {
 .report-one-thing__outcome {
   color: #f1f5f9;
   font-weight: 600;
+}
+
+/* Report — resolved primary strategy (Phase 9) */
+.report-primary-strategy {
+  margin-bottom: 2rem;
+}
+
+.report-primary-strategy__card {
+  max-width: 42rem;
+  padding: 1.25rem 1.35rem;
+  border-radius: 12px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-raised, #f8fafc);
+}
+
+.report-primary-strategy__label {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--app-text, #0f172a);
+}
+
+.report-primary-strategy__reason {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--app-muted, #475569);
 }

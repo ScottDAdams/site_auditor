@@ -712,8 +712,12 @@ def generate_ai_insights(payload, llm_client):
     final_output["structured_pass1"] = True
 
     validate_ai_output_strict(
-        final_output, dominant, _conflict_context_for_payload(payload)
+        final_output,
+        dominant,
+        _conflict_context_for_payload(payload),
+        payload.get("primary_strategy"),
     )
+    final_output["primary_strategy"] = payload.get("primary_strategy")
     if not validate_ai_output(final_output):
         raise ValueError("AI two-pass merge failed full-shape validation — inspect output")
 
@@ -723,8 +727,13 @@ def generate_ai_insights(payload, llm_client):
 
 def generate_execution_roadmap(payload, llm_client):
     data = json.dumps(payload, indent=2, default=str)
+    strat = payload.get("primary_strategy") or {}
+    strat_block = json.dumps(strat, indent=2, default=str)
     prompt = f"""{_SHARED_RULES}
 {CONSTRAINT_PROMPT}
+
+PRIMARY STRATEGY (non-negotiable: align every step; do not contradict this direction):
+{strat_block}
 
 You are a digital strategy operator. Return JSON only (no markdown).
 
@@ -917,9 +926,10 @@ def generate_roadmap_with_retry(
 ) -> dict:
     """Retry roadmap generation when structural validation fails."""
     bc = payload.get("business_context")
+    ps = payload.get("primary_strategy")
     for attempt in range(max_attempts):
         output = llm_client.generate_json(prompt)
-        if validate_roadmap_output(output, bc):
+        if validate_roadmap_output(output, bc, ps):
             return output
         print(f"[ROADMAP VALIDATION FAILED] Attempt {attempt + 1}")
     return build_fallback_roadmap(payload)
@@ -981,7 +991,13 @@ def _roadmap_step_ok(item: dict) -> bool:
     return True
 
 
-def validate_roadmap_output(obj, business_context: dict | None = None) -> bool:
+def validate_roadmap_output(
+    obj,
+    business_context: dict | None = None,
+    primary_strategy: dict | None = None,
+) -> bool:
+    from app.decision_arbitration import validate_roadmap_against_strategy
+
     if not isinstance(obj, dict):
         return False
     r = obj.get("roadmap")
@@ -997,6 +1013,8 @@ def validate_roadmap_output(obj, business_context: dict | None = None) -> bool:
                 return False
         if not roadmap_step_allowed(x, bc):
             return False
+    if not validate_roadmap_against_strategy(obj, primary_strategy):
+        return False
     return True
 
 

@@ -80,11 +80,14 @@ class TestExecutiveTopIssues(unittest.TestCase):
         p = self._payload_base()
         insights = {"problem_type": "strategic"}
         data = build_executive_summary_data(p, insights)
-        self.assertLessEqual(len(data["top_issues"]), 5)
-        self.assertEqual(data["top_issues"][0]["transformation_type"], "merge")
-        self.assertTrue(data["top_issues"][0].get("problem"))
-        self.assertIn("you should", data["top_issues"][0]["decision"].lower())
-        self.assertTrue(data["top_issues"][0]["business_consequence"])
+        # Phase 10: narrative consolidation caps cards and merges overlapping clusters
+        self.assertLessEqual(len(data["top_issues"]), 3)
+        self.assertGreaterEqual(len(data["top_issues"]), 1)
+        first = data["top_issues"][0]
+        self.assertTrue(first.get("problem"))
+        self.assertEqual(first.get("cluster_key"), "overlap_same_intent")
+        self.assertIn("you should", first["decision"].lower())
+        self.assertTrue(first["business_consequence"])
         self.assertTrue(data["primary_bet"]["action"])
         self.assertEqual(estimate_impact(data)["impact_level"] in ("High", "Medium", "Low"), True)
 

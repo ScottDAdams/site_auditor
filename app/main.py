@@ -53,6 +53,8 @@ from app.priority_scoring import (
     compute_structural_priority,
 )
 from app.transformation_spec import build_transformation_spec
+from app.opportunity_analysis import analyze_opportunities
+from app.decision_arbitration import resolve_primary_strategy
 from app.executive_summary import (
     build_executive_summary_data,
     render_ceo_summary,
@@ -441,6 +443,7 @@ def _run_audit_job(site_list: list[str]) -> None:
             "strategic_clusters": strategic_rows,
             "technical_fix_urls": technical_fix_urls,
             "dominant_problem_type": derive_problem_type(clusters),
+            "audit_findings": all_findings,
         }
         analysis_payload["pages"] = [
             {
@@ -468,6 +471,12 @@ def _run_audit_job(site_list: list[str]) -> None:
         )
         analysis_payload["transformation_spec"] = build_transformation_spec(
             analysis_payload
+        )
+        analysis_payload["opportunities"] = analyze_opportunities(analysis_payload)
+        analysis_payload["primary_strategy"] = resolve_primary_strategy(
+            analysis_payload,
+            None,
+            analysis_payload["opportunities"],
         )
 
         _ai_payload_exclude = frozenset({"strategic_clusters", "pages"})
@@ -514,7 +523,9 @@ def _run_audit_job(site_list: list[str]) -> None:
                 _set_phase("Building execution roadmap…")
                 raw_roadmap = generate_execution_roadmap(payload_for_ai, llm)
                 if validate_roadmap_output(
-                    raw_roadmap, analysis_payload.get("business_context")
+                    raw_roadmap,
+                    analysis_payload.get("business_context"),
+                    analysis_payload.get("primary_strategy"),
                 ):
                     execution_roadmap = raw_roadmap
                 else:

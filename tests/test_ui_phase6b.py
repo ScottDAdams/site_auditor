@@ -79,6 +79,17 @@ class TestUIPhase6b(unittest.TestCase):
                         "primary_issue_type": "strategic",
                         "risk_level": "moderate",
                     },
+                    "primary_strategy": {
+                        "strategy": "hybrid",
+                        "label": "Hybrid: consolidate technical, clarify strategic overlap",
+                        "reasoning": "Consolidate true duplicates first; clarify roles where pages still compete.",
+                        "confidence": 0.72,
+                        "rules": {
+                            "allow_merge": True,
+                            "allow_differentiation": True,
+                            "enforce_primary_direction": True,
+                        },
+                    },
                 },
                 "executive_summary_text": "Opening context in plain language.",
             }
@@ -100,6 +111,7 @@ class TestUIPhase6b(unittest.TestCase):
             self.assertIn(b"If you do one thing", r.content)
             self.assertIn(b"Decision brief", r.content)
             self.assertIn(b"CEO summary", r.content)
+            self.assertIn(b"Primary strategy", r.content)
             self.assertIn(b"View full technical audit", r.content)
             tr = self.client.get(f"/reports/{rid}/technical")
             self.assertEqual(tr.status_code, 200)

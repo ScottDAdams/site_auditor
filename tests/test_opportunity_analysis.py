@@ -64,6 +64,8 @@ class TestOpportunityAnalysis(unittest.TestCase):
         for o in out:
             self.assertIn("title", o)
             self.assertIn("pages", o)
+            self.assertIn("lever", o)
+            self.assertIn("mechanism", o)
             self.assertIn("opportunity", o)
             self.assertIn("impact", o)
             self.assertIn("action", o)
