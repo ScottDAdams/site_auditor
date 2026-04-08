@@ -4,6 +4,7 @@ import re
 
 from openai import OpenAI
 
+from app.analyzer import REMEDIATION_DECISION_TYPES
 from app.business_context import (
     default_allowed_actions,
     effective_allowed_actions,
@@ -12,6 +13,8 @@ from app.business_context import (
     url_requires_preservation,
 )
 from app.utils import canonicalize_url
+
+VALID_PROBLEM_TYPES = frozenset({"acceptable", "competitive", "technical", "strategic"})
 
 
 def safe_pair(a: str, b: str) -> bool:
@@ -94,7 +97,7 @@ def finalize_roadmap(roadmap_obj: dict | None) -> dict:
     return {**roadmap_obj, "roadmap": steps}
 
 BANNED_VERBS_RE = re.compile(
-    r"\b(improve|optimi[sz]e|enhance|refine|strengthen|align)\b",
+    r"\b(clarify|improve|optimi[sz]e|enhance|refine|strengthen|align)\b",
     re.I,
 )
 # Vague copy instructions (execution steps must state concrete edits).
@@ -149,7 +152,7 @@ def compute_audit_metrics(pages, clusters, all_findings):
 
     involved = set()
     for c in clusters:
-        if c.get("decision_type") == "ignore":
+        if c.get("decision_type") in ("ignore", "none"):
             continue
         for p in c.get("pages", []):
             u = p.get("url") if isinstance(p, dict) else p
@@ -167,7 +170,7 @@ def compute_audit_metrics(pages, clusters, all_findings):
     sims = [
         float(c.get("avg_similarity", 0))
         for c in clusters
-        if c.get("decision_type") != "ignore"
+        if c.get("decision_type") not in ("ignore", "none")
         and c.get("pages")
         and len(c["pages"]) > 1
     ]
@@ -189,8 +192,30 @@ _SHARED_RULES = """
 If your output could apply to another website, it is wrong.
 
 Every statement must tie to a URL from the payload or a numeric value from payload.metrics.
-Do not use: improve, optimize, enhance, refine, strengthen, align.
+FORBIDDEN WORDS (any occurrence invalidates output): clarify, improve, optimize, enhance, refine, strengthen, align.
 Use concrete operations: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition, none (only where allowed by business_context.allowed_actions). Use "none" only when no structural content action is appropriate (e.g. technical-only issues already routed elsewhere).
+
+NARRATIVE SPINE (no overlapping blurbs — each field has one job):
+- core_problem = mechanism + which URLs cluster (why the signal exists).
+- why_it_matters = business consequence (stake), not a repeat of core_problem.
+- primary_action = single decisive move (strategy-level).
+- execution_example = one concrete illustration (who changes what on which URL pattern).
+
+PROSE STYLE (all narrative fields: verdict, primary_issue, core_problem, why_it_matters, primary_action, execution_example, recommendation, business_impact, inaction_risk, metrics_explained.implication, roadmap title/description/expected_outcome, supporting_evidence.issue):
+- Each sentence: at most 22 words; aim for about 18.
+- One main idea per sentence; avoid comma splices and stacked "which/that/because" clauses.
+- Do not use filler phrases: "which can lead to", "indicating that", "this suggests", "it is important to note", "in order to".
+
+REPORT LAYERING (downstream HTML shows core_problem once in the executive block):
+- supporting_evidence[].issue and metrics_explained[].implication = metric/URL proof only. Never paraphrase or restate core_problem or verdict there.
+- Roadmap title/description/outcome = imperative actions and verifiable results. Do not restate the site diagnosis or reopen root-cause analysis.
+
+NARRATIVE ROLES (no duplicated phrasing across fields):
+- verdict = the decision/stance only (what the business should treat as true for this crawl).
+- primary_issue + core_problem = one story: primary_issue is the single canonical issue line; core_problem expands WHY (mechanism, which URLs cluster together)—do NOT restate the verdict wording.
+- supporting_evidence[].issue = proof only: observable facts (URLs, similarity/overlap numbers, cluster labels). Do NOT paraphrase the verdict or primary_issue/core_problem.
+
+When describing duplicate/overlap mechanics, do NOT lean on vague phrases like "high similarity score". Say that affected pages read as indistinguishable in purpose and are competing for the same user decision (tie to specific URLs or cluster dominant_url).
 
 For roadmap steps with action_type "differentiate" or "reposition", each step MUST include page_changes: at least 2 objects, each with url (full https URL from payload), change_type (one of: add_section, remove_section, rewrite_section, add_comparison, change_heading, adjust_cta), and instruction (specific edit — what to add/remove/rewrite; MUST NOT use: clarify, improve, optimize, enhance, refine, strengthen, align).
 """
@@ -240,17 +265,41 @@ You are a senior digital strategy consultant. Return JSON only (no markdown).
 
 The verdict MUST:
 - include at least one real https URL from the payload OR name a cluster by listing its dominant_url
-- describe one specific structural conflict (not generic positioning language)
+- state the decision/stance only—do not re-explain root cause (that belongs in core_problem after merge)
 - NOT use the words: significant, various, multiple
+- If payload clusters show duplication_class competitive OR decision_type differentiate/review, problem_type MUST be strategic and the verdict MUST NOT claim that technical URL duplication alone dominates the issue.
 
-The recommendation MUST:
-- name explicit actions using verbs from: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition (must respect business_context.allowed_actions and protected/core_product rules)
+primary_issue MUST:
+- be exactly one sentence: the single canonical issue for this audit (no bullet points)
+
+core_problem MUST:
+- explain WHY that issue exists (mechanism: embeddings, overlap, which URLs)—without repeating the verdict sentence or copying primary_issue verbatim
+
+why_it_matters MUST:
+- state business stakes only (revenue, trust, conversion clarity)—not a repeat of core_problem or primary_action.
+
+primary_action MUST:
+- one decisive strategic move using verbs from: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition (respect business_context.allowed_actions and protected/core_product rules)
 - cite at least one real https URL from the payload
-- if protected_paths or core_product pages are in overlap, state clearly that those URLs must NOT be deleted or merged away; prescribe differentiate or reposition instead
 
-Each metrics_explained row MUST give value + implication in plain business terms (e.g. what 0.94 similarity means for Google or conversion).
+execution_example MUST:
+- one concrete example of what to change (role + surface + URL pattern), not a second recommendation.
 
-The "clusters" array in this payload contains ONLY strategic clusters (distinct canonical resources). Ignore/technical URL-alias clusters are excluded—do not recommend merging URLs that are already normalized equivalents.
+The recommendation field (legacy mirror) MUST equal primary_action verbatim.
+
+The business_impact field (legacy mirror) MUST equal why_it_matters verbatim.
+
+Each metrics_explained row MUST give value + implication in plain business terms. For similarity, describe pages as indistinguishable in purpose and competing for the same user decision—not "high similarity score" boilerplate.
+
+supporting_evidence[].issue MUST describe observable overlap in copy, intent, or product decision in plain language; you may cite a metric as backup but do not lead with "cluster similarity 0.896" style jargon alone.
+
+The "clusters" array in this payload contains ONLY remediation clusters (distinct canonical resources: decision_type differentiate or review; legacy strategic may appear). Clusters include page_type, intent, decision_stage, duplication_class—use them. Ignore/technical URL-alias/none/acceptable clusters are excluded.
+
+Duplication is not automatically bad. Classify the audit-level problem using payload clusters and business_context:
+- acceptable: overlap is appropriate; little or no remediation
+- competitive: pages fight for the same user decision; differentiation or repositioning
+- technical: URL/canonical/slash/host duplication dominates
+- strategic: structure or governance change beyond page-level copy
 
 DATA:
 {data}
@@ -258,10 +307,15 @@ DATA:
 Return JSON with EXACTLY these keys:
 {{
   "verdict": "",
+  "primary_issue": "",
   "core_problem": "",
+  "why_it_matters": "",
+  "primary_action": "",
+  "execution_example": "",
   "recommendation": "",
   "business_impact": "",
   "inaction_risk": "",
+  "problem_type": "",
   "metrics_explained": [
     {{ "metric": "", "value": "", "implication": "" }}
   ],
@@ -275,8 +329,11 @@ Return JSON with EXACTLY these keys:
   ]
 }}
 
-primary_clusters: array of short strings, each naming one cluster using dominant_url + similarity from payload.clusters.
-supporting_evidence: at least 2 items; each metric_refs lists which metrics back the claim (e.g. "overlap_rate 0.62").
+primary_issue: one sentence; this becomes the single headline issue (merged into core_problem downstream).
+recommendation and business_impact: must duplicate primary_action and why_it_matters exactly (same strings).
+problem_type: exactly one of: acceptable | competitive | technical | strategic. If any cluster has duplication_class competitive OR decision_type differentiate or review, problem_type MUST be strategic—never strategic + a verdict that says technical duplication dominates the crawl.
+primary_clusters: short structural labels (dominant_url + similarity)—inventory only, not a second narrative.
+supporting_evidence: at least 2 items; issue text states what overlaps in the real page experience (copy, offer, decision), not raw embedding scores alone.
 """
     return llm_client.generate_json(prompt)
 
@@ -292,6 +349,8 @@ Create a 30-day execution plan: 3 to 5 steps, ordered by impact.
 
 Each step MUST:
 - set action_type to exactly one of: merge, redirect, delete, consolidate, split, rewrite, differentiate, reposition, none
+- title: short imperative phrase suitable after "Step N — " (e.g. "Differentiate these pages"). No ALL CAPS. No action_type token pasted into the title.
+- description: concrete actions on named URLs only. Do not restate why the site has duplication; follow PROSE STYLE (max 22 words per sentence).
 - target_urls[0] and target_urls[1] MUST NOT canonicalize to the same URL when both are present (distinct destinations only)
 - obey business_context.allowed_actions (only use action types set to true)
 - NEVER use delete on protected_paths or core_product URLs; NEVER merge/redirect across regions when separate_regions is true
@@ -380,24 +439,60 @@ def _recommendation_valid(rec: str) -> bool:
     return True
 
 
+def _execution_example_valid(text: str) -> bool:
+    if not text or not isinstance(text, str) or len(text.strip()) < 16:
+        return False
+    if BANNED_VERBS_RE.search(text):
+        return False
+    return True
+
+
+def _forbidden_language(*texts: str) -> bool:
+    """True if any segment contains banned vocabulary."""
+    for t in texts:
+        if t and BANNED_VERBS_RE.search(str(t)):
+            return True
+    return False
+
+
 def validate_ai_output(ai_output) -> bool:
     if not isinstance(ai_output, dict):
         return False
     required = (
         "verdict",
         "core_problem",
+        "why_it_matters",
+        "primary_action",
+        "execution_example",
         "recommendation",
         "business_impact",
         "inaction_risk",
+        "problem_type",
         "metrics_explained",
         "primary_clusters",
         "supporting_evidence",
     )
     if any(k not in ai_output for k in required):
         return False
+    if ai_output.get("problem_type") not in VALID_PROBLEM_TYPES:
+        return False
     if not _verdict_valid(ai_output.get("verdict", "")):
         return False
+    if not _recommendation_valid(ai_output.get("primary_action", "")):
+        return False
     if not _recommendation_valid(ai_output.get("recommendation", "")):
+        return False
+    if not _execution_example_valid(ai_output.get("execution_example", "")):
+        return False
+    if _forbidden_language(
+        ai_output.get("verdict", ""),
+        ai_output.get("core_problem", ""),
+        ai_output.get("why_it_matters", ""),
+        ai_output.get("primary_action", ""),
+        ai_output.get("execution_example", ""),
+        ai_output.get("business_impact", ""),
+        ai_output.get("inaction_risk", ""),
+    ):
         return False
     me = ai_output.get("metrics_explained")
     if not isinstance(me, list) or len(me) < 1:
@@ -407,7 +502,7 @@ def validate_ai_output(ai_output) -> bool:
             return False
         if not (row.get("metric") and row.get("value") and row.get("implication")):
             return False
-        if BANNED_VERBS_RE.search(str(row.get("implication", ""))):
+        if _forbidden_language(str(row.get("implication", ""))):
             return False
     pc = ai_output.get("primary_clusters")
     if not isinstance(pc, list) or len(pc) < 1:
@@ -422,6 +517,8 @@ def validate_ai_output(ai_output) -> bool:
         if not isinstance(urls, list) or len(urls) < 1:
             return False
         if not item.get("issue"):
+            return False
+        if _forbidden_language(str(item.get("issue", ""))):
             return False
         mrefs = item.get("metric_refs")
         if not isinstance(mrefs, list):
@@ -511,7 +608,7 @@ def _strategic_cluster_rows(payload: dict) -> list:
     return [
         c
         for c in (payload.get("clusters") or [])
-        if c.get("decision_type") == "strategic"
+        if c.get("decision_type") in REMEDIATION_DECISION_TYPES
     ]
 
 
@@ -546,18 +643,15 @@ def detect_secondary_issue(payload: dict) -> str:
 
     if tech_n >= 3:
         return (
-            "Technical URL variants (canonical, slash, hostname) are splitting crawl signals "
-            "across duplicate routes—normalize before scaling content work."
+            "Many technical URL variants split crawl signals. Normalize routes before content work."
         )
     if avg_sim >= 0.92:
         return (
-            "Within-cluster embeddings are extremely tight; copy and layout differentiation "
-            "are the main levers left while keeping required URLs live."
+            "Cluster embeddings are very tight. Differentiate copy and layout on required URLs."
         )
     if high_issues >= 2:
         return (
-            "Multiple high-severity duplication findings compete for remediation priority—"
-            "sequence fixes by traffic and revenue impact."
+            "Several severe duplication items compete for priority. Sequence by traffic and revenue."
         )
     try:
         uniq = float(m.get("content_uniqueness_score", 1) or 1)
@@ -565,20 +659,85 @@ def detect_secondary_issue(payload: dict) -> str:
         uniq = 1.0
     if uniq < 0.35:
         return (
-            "Low content-uniqueness scores indicate overlapping narratives; tighten one primary "
-            "intent per URL before adding net-new pages."
+            "Content-uniqueness is low. Give each URL one primary intent before adding pages."
         )
     return (
-        "Cross-page intent boundaries need tightening so each URL owns one primary conversion path."
+        "Tighten intent boundaries so each URL owns one primary conversion path."
     )
+
+
+def enforce_single_problem(insight: dict) -> dict:
+    """Collapse primary_issue + core_problem into one headline field for the report."""
+    out = dict(insight)
+    out["core_problem"] = (out.get("primary_issue") or out.get("core_problem") or "").strip()
+    out.pop("primary_issue", None)
+    return out
+
+
+def apply_narrative_aliases(insight: dict) -> dict:
+    """Unify collapsed narrative keys with legacy recommendation/business_impact fields."""
+    o = dict(insight)
+    wi = (o.get("why_it_matters") or o.get("business_impact") or "").strip()
+    pa = (o.get("primary_action") or o.get("recommendation") or "").strip()
+    ex = (o.get("execution_example") or "").strip()
+    o["why_it_matters"] = wi
+    o["business_impact"] = wi
+    o["primary_action"] = pa
+    o["recommendation"] = pa
+    o["execution_example"] = ex
+    return o
+
+
+def payload_requires_strategic_problem_type(payload: dict) -> bool:
+    """Competitive or remediation clusters → audit must not read as technical-only."""
+    for c in _strategic_cluster_rows(payload):
+        if not isinstance(c, dict):
+            continue
+        if c.get("duplication_class") == "competitive":
+            return True
+        if c.get("decision_type") in ("differentiate", "review"):
+            return True
+    return False
+
+
+def reconcile_problem_type_and_verdict(insights: dict, payload: dict) -> dict:
+    """
+    Align problem_type and verdict with cluster signals: never strategic assessment +
+    'technical duplication dominates' messaging when remediation clusters exist.
+    """
+    out = dict(insights)
+    needs_strategic = payload_requires_strategic_problem_type(payload)
+    v = (out.get("verdict") or "").strip()
+    vl = v.lower()
+    bad_tech = "technical duplication dominates" in vl
+
+    if needs_strategic:
+        out["problem_type"] = "strategic"
+        if bad_tech or "no strategic content conflicts detected after normalization" in vl:
+            anchor = ""
+            for c in _strategic_cluster_rows(payload):
+                if c.get("dominant_url"):
+                    anchor = str(c["dominant_url"])
+                    break
+            if not anchor:
+                pu = payload.get("page_urls") or []
+                anchor = str(pu[0]) if pu else "a listed URL"
+            out["verdict"] = (
+                f"Overlapping pages around {anchor} need distinct positioning; "
+                f"resolve copy and intent first—canonical fixes alone will not fix that competition."
+            )
+    elif not _strategic_cluster_rows(payload) and (payload.get("technical_fix_urls") or []):
+        out["problem_type"] = "technical"
+    return out
 
 
 def enrich_insights_decision_layer(insights: dict | None, payload: dict) -> dict:
     """
-    Post-process insights: visibility loss line on business_impact, model confidence,
-    and secondary issue string for the report.
+    Post-process insights: visibility loss line on why_it_matters, model confidence,
+    secondary issue, and reconciliation of problem_type vs crawl signals.
     """
-    out = dict(insights or {})
+    out = enforce_single_problem(dict(insights or {}))
+    out = apply_narrative_aliases(out)
     m = payload.get("metrics") or {}
     try:
         overlap = float(m.get("overlap_rate", 0))
@@ -586,11 +745,12 @@ def enrich_insights_decision_layer(insights: dict | None, payload: dict) -> dict
         overlap = 0.0
     loss = estimate_visibility_loss(overlap)
     loss_line = (
-        f"{loss} of organic visibility is likely diluted across competing pages, "
-        "reducing conversion clarity and ranking strength."
+        f"About {loss} of organic visibility likely splits across competing pages. "
+        "That blurs conversion paths and ranking focus."
     )
-    bi = (out.get("business_impact") or "").strip()
-    out["business_impact"] = f"{loss_line} {bi}".strip() if bi else loss_line
+    wi = (out.get("why_it_matters") or "").strip()
+    out["why_it_matters"] = f"{loss_line} {wi}".strip() if wi else loss_line
+    out["business_impact"] = out["why_it_matters"]
 
     try:
         avg_sim = float(m.get("avg_cluster_similarity", 0))
@@ -598,7 +758,13 @@ def enrich_insights_decision_layer(insights: dict | None, payload: dict) -> dict
         avg_sim = 0.0
     out["confidence"] = calculate_confidence(len(_strategic_cluster_rows(payload)), avg_sim)
     out["secondary_issue"] = detect_secondary_issue(payload)
-    return out
+    if overlap >= 0.45:
+        out["impact_level"] = "High"
+    elif overlap >= 0.28:
+        out["impact_level"] = "Moderate"
+    else:
+        out["impact_level"] = "Low"
+    return reconcile_problem_type_and_verdict(out, payload)
 
 
 def _first_urls_from_payload(payload: dict, limit: int = 8):
@@ -648,18 +814,34 @@ def _fallback_insights_technical_variants_only(
         if _url_allowed_for_strategic(str(u), payload)
     ][:2]
     ev_urls = pu if len(pu) >= 2 else (pu + ["https://127.0.0.1/"])[:2]
+    sample_u = ev_urls[0] if ev_urls else "https://127.0.0.1/"
+    rec = (
+        f"Redirect duplicate host and slash variants to {sample_u} using 301s and rel=canonical."
+    )
+    why = (
+        "Technical URL duplication can dilute crawl budget and split signals until one canonical URL is chosen."
+    )
+    ex = (
+        f"Example: pick {sample_u} as the single indexable URL; 301 every alias host, path, "
+        f"and scheme variant to it and set rel=canonical on each duplicate."
+    )
     return {
-        "verdict": "No strategic content conflicts detected after normalization.",
+        "verdict": (
+            f"No strategic content conflicts detected after normalization; "
+            f"crawl reference URL {sample_u}."
+        ),
         "core_problem": (
             "Duplicate signals are caused by technical URL variants, not structural content issues."
         ),
-        "recommendation": "Apply canonical tags and redirects to normalize URL variants.",
-        "business_impact": (
-            "Technical URL duplication can dilute crawl budget and split signals until one canonical URL is chosen."
-        ),
+        "why_it_matters": why,
+        "primary_action": rec,
+        "execution_example": ex,
+        "recommendation": rec,
+        "business_impact": why,
         "inaction_risk": (
             "Without canonical normalization, equivalent URLs may continue to compete for the same intent."
         ),
+        "problem_type": "technical",
         "metrics_explained": metrics_explained,
         "primary_clusters": [
             "No strategic duplicate clusters after normalization—address variants under Technical SEO fixes."
@@ -667,12 +849,18 @@ def _fallback_insights_technical_variants_only(
         "supporting_evidence": [
             {
                 "urls": ev_urls[:1] or ["https://127.0.0.1/"],
-                "issue": "Embedding overlap is driven by URL aliases, not distinct page topics.",
+                "issue": (
+                    f"The crawl shows URL-alias overlap around {ev_urls[0] if ev_urls else 'n/a'} "
+                    f"without a separate content cluster—fix normalization before scaling pages."
+                ),
                 "metric_refs": [f"overlap_rate {m.get('overlap_rate', 0)}"],
             },
             {
                 "urls": ev_urls if len(ev_urls) >= 2 else ev_urls + ["https://127.0.0.1/"],
-                "issue": "Normalize scheme, host, trailing slashes, and homepage paths before content consolidation.",
+                "issue": (
+                    f"Second sample pair shares crawl overlap signals; metrics file as "
+                    f"avg_cluster_similarity {m.get('avg_cluster_similarity', 0)} for audit context."
+                ),
                 "metric_refs": [
                     f"avg_cluster_similarity {m.get('avg_cluster_similarity', 0)}",
                     f"content_uniqueness_score {m.get('content_uniqueness_score', 0)}",
@@ -720,8 +908,8 @@ def build_fallback_insights(payload: dict) -> dict:
             "metric": "avg_cluster_similarity",
             "value": str(m.get("avg_cluster_similarity", 0)),
             "implication": (
-                "Within duplicate clusters, embeddings sit this close—close to 1.0 means "
-                "search engines see one topic duplicated across URLs."
+                "When this approaches 1.0, paired pages read as indistinguishable in purpose "
+                "and compete for the same user decision in search and on-site journeys."
             ),
         },
         {
@@ -770,8 +958,8 @@ def build_fallback_insights(payload: dict) -> dict:
             {
                 "urls": ulist,
                 "issue": (
-                    f"Near-duplicate cluster at similarity {c.get('similarity')}: "
-                    f"{dom} competes with {', '.join(comp[:3])}."
+                    f"These URLs present overlapping coverage copy and the same policy decision path; "
+                    f"embedding similarity is high (see metrics) but the issue is shared messaging, not the number alone."
                 ),
                 "metric_refs": [
                     f"avg_cluster_similarity {c.get('similarity', m.get('avg_cluster_similarity', 0))}",
@@ -787,8 +975,8 @@ def build_fallback_insights(payload: dict) -> dict:
             {
                 "urls": [a, b],
                 "issue": (
-                    "Distinct normalized URLs share one embedding cluster—address as content strategy, "
-                    "not URL-alias cleanup."
+                    f"Pages {a} and {b} target the same buyer job with parallel proof blocks; "
+                    f"overlap_rate {m.get('overlap_rate', 0)} shows how much of the crawl sits in tied clusters."
                 ),
                 "metric_refs": [
                     f"overlap_rate {m.get('overlap_rate', 0)}",
@@ -820,6 +1008,13 @@ def build_fallback_insights(payload: dict) -> dict:
             f"Regional domains share near-identical embeddings ({u0} vs {u1}); the issue is "
             f"undifferentiated copy, not excess URLs."
         )
+        why = (
+            "Splitting authority and trust between parallel regional URLs weakens each market’s relevance."
+        )
+        ex = (
+            f"Example: differentiate policy positioning between AU and NZ pages—add region-only "
+            f"coverage limits on {u0} and distinct proof on {u1}; do not reuse the same hero block."
+        )
     elif any_preserved:
         preserved_list = [u for u in urls_pool if url_requires_preservation(u, bc)][:4]
         pl = ", ".join(preserved_list) if preserved_list else anchor_url
@@ -834,6 +1029,13 @@ def build_fallback_insights(payload: dict) -> dict:
         core_problem = (
             f"Required URLs participate in overlap signals while staying business-mandatory; "
             f"the issue is positioning collision, not removable pages."
+        )
+        why = (
+            "Mandatory URLs that overlap force buyers to compare duplicate stories and dilute conversion paths."
+        )
+        ex = (
+            f"Example: on each required URL, replace shared bullet lists with one proof section unique "
+            f"to that route; keep both URLs live."
         )
     else:
         verdict = (
@@ -853,19 +1055,28 @@ def build_fallback_insights(payload: dict) -> dict:
             "The crawl maps competing URLs into the same embedding cluster; canonical vs "
             "competing paths are listed per strategic cluster above."
         )
+        why = (
+            "Split traffic and backlinks across tied URLs depresses conversion clarity and "
+            "regional relevance per domain."
+        )
+        ex = (
+            f"Example: fold redundant sections from {u1} into {u0}, then 301 {u1} once one page "
+            f"owns the story end-to-end."
+        )
 
     return {
         "verdict": verdict,
         "core_problem": core_problem,
+        "why_it_matters": why,
+        "primary_action": rec,
+        "execution_example": ex,
         "recommendation": rec,
-        "business_impact": (
-            "Split traffic and backlinks across tied URLs depresses conversion clarity and "
-            "regional relevance per domain."
-        ),
+        "business_impact": why,
         "inaction_risk": (
             "Publishing more pages without consolidating duplicates repeats the same "
             "cannibalization pattern."
         ),
+        "problem_type": "strategic",
         "metrics_explained": metrics_explained,
         "primary_clusters": primary_clusters[:6],
         "supporting_evidence": ev[:6],

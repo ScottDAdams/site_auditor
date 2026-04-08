@@ -1,0 +1,56 @@
+{% extends "admin/base.html" %}
+{% block content %}
+
+<p class="admin-muted">Rules are evaluated in <strong>priority</strong> order (lower numbers first). The first rule whose <strong>conditions</strong> all match the cluster wins.</p>
+
+<section class="rule-section">
+    <h2>Add rule</h2>
+    <form method="post" action="/admin/decision-rules/create" class="rule-form">
+        <label>Name <input type="text" name="name" required placeholder="e.g. FAQ informational" /></label>
+        <label>Priority <input type="number" name="priority" value="100" /></label>
+        <label class="checkbox"><input type="checkbox" name="active" checked /> Active</label>
+        <label>Conditions (JSON)
+            <textarea name="conditions_json" rows="4" required placeholder='{"page_type": "faq", "intent": "informational"}'></textarea>
+        </label>
+        <label>Outcomes (JSON)
+            <textarea name="outcomes_json" rows="5" required placeholder='{"duplication": "acceptable", "action": "none"}'></textarea>
+        </label>
+        <button type="submit">Create rule</button>
+    </form>
+</section>
+
+<section class="rule-cards">
+    <h2>Existing rules</h2>
+    {% for r in rules %}
+    <article class="rule-card {% if not r.active %}rule-inactive{% endif %}">
+        <header class="rule-card-head">
+            <h3>{{ r.name }}</h3>
+            <span class="rule-priority">Priority: {{ r.priority }}</span>
+            <form method="post" action="/admin/decision-rules/{{ r.id }}/toggle" class="inline-form">
+                <button type="submit" class="btn-toggle" title="Toggle active">
+                    {% if r.active %}Active{% else %}Inactive{% endif %}
+                </button>
+            </form>
+            <form method="post" action="/admin/decision-rules/{{ r.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this rule?');">
+                <button type="submit" class="btn-danger">Delete</button>
+            </form>
+        </header>
+        <form method="post" action="/admin/decision-rules/{{ r.id }}/update" class="rule-form">
+            <label>Name <input type="text" name="name" value="{{ r.name }}" required /></label>
+            <label>Priority <input type="number" name="priority" value="{{ r.priority }}" /></label>
+            <label class="checkbox"><input type="checkbox" name="active" {% if r.active %}checked{% endif %} /> Active</label>
+            <label>Conditions (JSON)
+                <textarea name="conditions_json" rows="4" required>{{ r.conditions_json }}</textarea>
+            </label>
+            <label>Outcomes (JSON)
+                <textarea name="outcomes_json" rows="5" required>{{ r.outcomes_json }}</textarea>
+            </label>
+            <button type="submit">Save changes</button>
+        </form>
+    </article>
+    {% else %}
+    <p>No rules yet. Defaults are created on first app startup.</p>
+    {% endfor %}
+</section>
+
+{% endblock %}

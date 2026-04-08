@@ -30,6 +30,62 @@ DUPLICATION_TYPES = [
     "Navigational redundancy",
 ]
 
+# Clusters that need content-strategy / remediation in downstream AI and scoring.
+REMEDIATION_DECISION_TYPES = frozenset(
+    {"strategic", "differentiate", "review"}
+)
+
+
+def classify_page(url: str, title: str, content: str) -> dict:
+    """Lightweight page signals for duplication judgment (layered on top of embeddings)."""
+    text = f"{title} {content}".lower()
+
+    if "faq" in url.lower() or "faq" in text:
+        page_type = "faq"
+    elif "compare" in text:
+        page_type = "comparison"
+    elif "policy" in text or "coverage" in text:
+        page_type = "product"
+    elif "blog" in url.lower() or "article" in url.lower():
+        page_type = "blog"
+    else:
+        page_type = "landing"
+
+    if any(x in text for x in ["buy", "quote", "price", "cost"]):
+        intent = "transactional"
+    elif any(x in text for x in ["best", "top", "compare"]):
+        intent = "commercial"
+    else:
+        intent = "informational"
+
+    if intent == "transactional":
+        stage = "decision"
+    elif intent == "commercial":
+        stage = "consideration"
+    else:
+        stage = "awareness"
+
+    return {
+        "page_type": page_type,
+        "intent": intent,
+        "decision_stage": stage,
+    }
+
+
+def analyze_site_structure(pages):
+    """Single-site crawl: distribution of pages across funnel stages."""
+    intent_counts = {"awareness": 0, "consideration": 0, "decision": 0}
+    for p in pages or []:
+        cl = p.get("classification") or classify_page(
+            p.get("url", ""),
+            p.get("title", "") or "",
+            p.get("content") or p.get("text") or "",
+        )
+        stage = cl.get("decision_stage") or "awareness"
+        if stage in intent_counts:
+            intent_counts[stage] += 1
+    return {"intent_distribution": intent_counts}
+
 
 def _resolve_content_type(types: set) -> str:
     """Pick a single page-type label for rules; never return 'mixed'."""
@@ -44,7 +100,7 @@ def _resolve_content_type(types: set) -> str:
     return "other"
 
 
-def classify_duplication(cluster) -> str:
+def classify_duplication_taxonomy(cluster) -> str:
     """
     Heuristic taxonomy for cluster-level duplication.
     Always returns one of DUPLICATION_TYPES.
@@ -86,6 +142,47 @@ def classify_duplication(cluster) -> str:
     return "Structural duplication"
 
 
+def summarize_cluster_classification(cluster) -> dict:
+    pages = cluster.get("pages") or []
+    types, intents, stages = [], [], []
+    for p in pages:
+        cl = p.get("classification")
+        if not cl:
+            cl = classify_page(
+                p.get("url", ""),
+                p.get("title", "") or "",
+                p.get("content") or p.get("text") or "",
+            )
+        types.append(cl.get("page_type", "landing"))
+        intents.append(cl.get("intent", "informational"))
+        stages.append(cl.get("decision_stage", "awareness"))
+    if not types:
+        return {
+            "dominant_type": "landing",
+            "dominant_intent": "informational",
+            "dominant_stage": "awareness",
+        }
+    return {
+        "dominant_type": max(set(types), key=types.count),
+        "dominant_intent": max(set(intents), key=intents.count),
+        "dominant_stage": max(set(stages), key=stages.count),
+    }
+
+
+def classify_duplication_class(cluster, rules: list | None = None) -> str:
+    """
+    Judgment layer: acceptable | competitive | needs_review.
+    Uses Decision Rules from the DB unless `rules` is passed (tests).
+    """
+    from app.decision_rules_engine import classify_duplication_from_rules, load_active_rules
+    from app.db.session import SessionLocal
+
+    if rules is None:
+        with SessionLocal() as session:
+            rules = load_active_rules(session)
+    return classify_duplication_from_rules(cluster, rules)
+
+
 def classify_topic_overlap(o: dict) -> str:
     """Taxonomy for cross-cluster / pair overlap signals."""
     cross = o.get("domain_1") != o.get("domain_2")
@@ -108,13 +205,28 @@ def classify_topic_overlap(o: dict) -> str:
     return "Structural duplication"
 
 
-def classify_cluster_decisions(clusters):
+def classify_cluster_decisions(clusters, decision_rules: list | None = None):
     """
     Tag each cluster for downstream AI vs technical-only handling.
     - ignore: normalized URLs are identical (crawl / alias noise).
     - technical_fix: same canonical resource, different URL forms (www, scheme, slash).
-    - strategic: distinct resources; needs content strategy.
+    - none: distinct resources but duplication judged acceptable for page type/stage.
+    - differentiate / review: distinct resources; content action or manual review.
+    Technical URL logic runs first and is unchanged.
+    Duplication judgment uses DB decision rules (Admin → Decision Rules) when
+    `decision_rules` is None.
     """
+    from app.decision_rules_engine import (
+        decision_reason_from_outcomes,
+        evaluate_rules,
+        load_active_rules,
+    )
+    from app.db.session import SessionLocal
+
+    if decision_rules is None:
+        with SessionLocal() as session:
+            decision_rules = load_active_rules(session)
+
     for cluster in clusters or []:
         pages = cluster.get("pages") or []
         urls = [p["url"] for p in pages if p.get("url")]
@@ -134,22 +246,44 @@ def classify_cluster_decisions(clusters):
             cluster["decision_type"] = "ignore"
             cluster["technical_issue"] = None
             cluster["technical_fix_recommendation"] = None
+            cluster["decision_reason"] = None
+            cluster["duplication_class"] = None
+            cluster["classification_summary"] = None
             continue
         norms = {canonicalize_url(u) for u in urls}
         if len(norms) == 1:
             cluster["decision_type"] = "ignore"
             cluster["technical_issue"] = None
             cluster["technical_fix_recommendation"] = None
+            cluster["decision_reason"] = None
+            cluster["duplication_class"] = None
+            cluster["classification_summary"] = None
         elif len(distinct_urls) < 2:
             cluster["decision_type"] = "technical_fix"
             cluster["technical_issue"] = infer_technical_issue(urls)
             cluster["technical_fix_recommendation"] = (
                 "301 redirect to one canonical URL + rel=canonical on duplicate URLs"
             )
+            cluster["classification_summary"] = summarize_cluster_classification(cluster)
+            cluster["duplication_class"] = "technical"
+            cluster["decision_reason"] = None
         else:
-            cluster["decision_type"] = "strategic"
+            cluster["classification_summary"] = summarize_cluster_classification(cluster)
+            outcomes = evaluate_rules(cluster, decision_rules)
+            dup = outcomes.get("duplication") or "needs_review"
+            if dup not in ("acceptable", "competitive", "needs_review"):
+                dup = "needs_review"
+            cluster["duplication_class"] = dup
+            cluster["rule_outcomes"] = outcomes
             cluster["technical_issue"] = None
             cluster["technical_fix_recommendation"] = None
+            cluster["decision_reason"] = decision_reason_from_outcomes(outcomes, dup)
+            if dup == "acceptable":
+                cluster["decision_type"] = "none"
+            elif dup == "competitive":
+                cluster["decision_type"] = "differentiate"
+            else:
+                cluster["decision_type"] = "review"
 
 
 DUPLICATION_RULES = {
@@ -244,7 +378,7 @@ def analyze_clusters(clusters):
         primary_type = _resolve_content_type(types)
 
         cross_market = len(domains) > 1
-        dup_type = classify_duplication(c)
+        dup_type = classify_duplication_taxonomy(c)
 
         if primary_type in DUPLICATION_RULES:
             rule = DUPLICATION_RULES[primary_type]
@@ -269,6 +403,10 @@ def analyze_clusters(clusters):
                 "duplication_type": dup_type,
                 "dominant_url": c.get("dominant_url"),
                 "competing_urls": c.get("competing_urls") or [],
+                "classification_summary": c.get("classification_summary"),
+                "duplication_class": c.get("duplication_class"),
+                "decision_reason": c.get("decision_reason"),
+                "decision_type": c.get("decision_type"),
             }
         )
 
@@ -372,7 +510,7 @@ def analyze_overlaps(overlaps):
         if types.count("product") == 2:
             priority = "HIGH"
             action = (
-                "Clarify positioning between these product offerings "
+                "Differentiate policy positioning between these product URLs "
                 "(coverage, audience, use case)."
             )
         elif "guide" in types:

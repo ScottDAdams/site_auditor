@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>{% block title %}{{ title | default('Admin') }}{% endblock %} · Site Auditor</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/admin.css" />
+</head>
+<body class="admin-body">
+    <div class="admin-layout">
+        <aside class="admin-sidebar">
+            <p class="admin-brand">Site Auditor</p>
+            <p class="admin-nav-label">AI Engines</p>
+            <nav class="admin-nav">
+                <a href="/admin/ai-engines" class="{% if request.url.path == '/admin/ai-engines' %}active{% endif %}">AI Engines</a>
+                <a href="/admin/ai-prompts" class="{% if request.url.path == '/admin/ai-prompts' %}active{% endif %}">AI Prompts</a>
+                <a href="/admin/decision-rules" class="{% if request.url.path == '/admin/decision-rules' %}active{% endif %}">Decision Rules</a>
+                <a href="/admin/scoring-weights" class="{% if request.url.path == '/admin/scoring-weights' %}active{% endif %}">Scoring Weights</a>
+            </nav>
+            <p class="admin-nav-footer"><a href="/">← Back to audit</a></p>
+        </aside>
+        <main class="admin-main">
+            <h1 class="admin-page-title">{{ page_heading | default(title) }}</h1>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</body>
+</html>

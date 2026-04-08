@@ -2,6 +2,8 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+from app.analyzer import classify_page as classify_page_metadata
+
 
 def get_domain(url: str) -> str:
     return urlparse(url).netloc.replace("www.", "")
@@ -23,7 +25,7 @@ def extract_text(html):
     return text
 
 
-def classify_page(url: str, text: str) -> str:
+def infer_rule_page_type(url: str, text: str) -> str:
     url_lower = url.lower()
     t = text.lower()
     word_count = len(text.split())
@@ -114,22 +116,30 @@ def crawl_site(base_url, max_pages=20):
         if not text:
             continue
 
+        soup = BeautifulSoup(response.text, "html.parser")
+        title_el = soup.find("title")
+        title = (title_el.get_text(strip=True) if title_el else "") or ""
+        if not title:
+            h1 = soup.find("h1")
+            title = h1.get_text(strip=True) if h1 else ""
+
         path = url.replace(base_url, "")
         word_count = len(text.split())
-        page_type = classify_page(url, text)
-        print(f"CLASSIFIED: {url} → {page_type}")
+        rule_type = infer_rule_page_type(url, text)
+        print(f"CLASSIFIED: {url} → {rule_type}")
+        classification = classify_page_metadata(url, title, text)
         page = {
             "url": url,
             "path": path,
             "domain": get_domain(url),
             "text": text,
+            "title": title,
             "word_count": word_count,
-            "type": page_type,
+            "type": rule_type,
             "content": text,
+            "classification": classification,
         }
         pages.append(page)
-
-        soup = BeautifulSoup(response.text, "html.parser")
 
         for link in soup.find_all("a", href=True):
             href = link["href"]

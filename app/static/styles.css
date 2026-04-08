@@ -1,3 +1,24 @@
+.audit-run-status {
+  margin: 0 0 20px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.audit-phase {
+  margin: 8px 0 0 0;
+  font-size: 0.95rem;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.audit-error {
+  margin: 8px 0 0 0;
+  font-size: 0.9rem;
+  color: #b91c1c;
+}
+
 .info-tooltip {
   position: relative;
   display: inline-block;

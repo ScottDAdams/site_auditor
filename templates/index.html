@@ -7,17 +7,21 @@
     <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-    <p>Status: {{ state.status }}</p>
     <p>Clusters found: {{ state.clusters|length }}</p>
 
     <h1>Site Auditor</h1>
+    <p style="margin: 0 0 16px 0;"><a href="/admin/decision-rules">Admin Console</a></p>
+
+    <section class="audit-run-status" aria-label="Audit run status">
+        <p id="audit-status-line">Status: {{ state.status }}</p>
+        <p id="audit-phase-line" class="audit-phase" role="status" aria-live="polite" {% if state.status not in ('running', 'error') %}hidden{% endif %}>{% if state.phase %}{{ state.phase }}{% elif state.status == 'running' %}Working…{% endif %}</p>
+        <p class="audit-error" id="audit-error-line" {% if not state.error %}hidden{% endif %}>{{ state.error or '' }}</p>
+    </section>
 
     <form action="/run-audit" method="post">
         <input type="text" name="sites" placeholder="https://example.com, https://example.co.nz" style="width:400px;" />
         <button type="submit">Run Audit</button>
     </form>
-
-    <h2>Status: {{ state.status }}</h2>
 
     {% if state.clusters and state.clusters|length > 0 %}
     <h3>Duplicate Clusters</h3>
@@ -39,5 +43,57 @@
         <h2>Report</h2>
         <div class="audit-report">{{ state.report | safe }}</div>
     {% endif %}
+
+    <script>
+    (function () {
+        var pollMs = 900;
+        function $(id) { return document.getElementById(id); }
+
+        function apply(data) {
+            var st = data.status || "";
+            var ph = data.phase || "";
+            var err = data.error || "";
+            var statusLine = $("audit-status-line");
+            var phaseLine = $("audit-phase-line");
+            var errLine = $("audit-error-line");
+            if (statusLine) statusLine.textContent = "Status: " + st;
+            if (phaseLine) {
+                if (st === "running") {
+                    phaseLine.textContent = ph || "Working…";
+                    phaseLine.hidden = false;
+                } else if (st === "error") {
+                    phaseLine.textContent = ph || err || "Audit failed.";
+                    phaseLine.hidden = false;
+                } else {
+                    phaseLine.textContent = ph || "";
+                    phaseLine.hidden = st === "done" || !ph;
+                }
+            }
+            if (errLine) {
+                if (st === "error" && err) {
+                    errLine.textContent = err;
+                    errLine.hidden = false;
+                } else {
+                    errLine.hidden = true;
+                }
+            }
+            if (st === "done") {
+                window.location.reload();
+            }
+        }
+
+        function tick() {
+            fetch("/api/audit-status", { credentials: "same-origin" })
+                .then(function (r) { return r.json(); })
+                .then(apply)
+                .catch(function () { /* transient network; next tick retries */ });
+        }
+
+        {% if state.status == 'running' %}
+        setInterval(tick, pollMs);
+        tick();
+        {% endif %}
+    })();
+    </script>
 </body>
 </html>

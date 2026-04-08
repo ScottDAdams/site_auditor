@@ -1,6 +1,8 @@
 from html import escape
 
+from app.analyzer import REMEDIATION_DECISION_TYPES
 from app.scoring.benchmarks import classify_overlap_rate, get_scoring_weights
+from app.scoring.urgency import classify_urgency
 
 # Tooltip copy for key metrics only (keeps total report tooltips intentional; ~6 max).
 _METRIC_TOOLTIPS = {
@@ -17,6 +19,17 @@ _METRIC_TOOLTIPS = {
         "to rank independently."
     ),
 }
+
+
+def _duplication_assessment_label(dup_class: str | None) -> str:
+    if not dup_class:
+        return "—"
+    return {
+        "acceptable": "No action needed",
+        "competitive": "Competing pages",
+        "technical": "Technical duplication",
+        "needs_review": "Needs review",
+    }.get(dup_class, dup_class)
 
 
 def _safe_float(x) -> float:
@@ -55,10 +68,82 @@ _FINDING_CARD = (
 )
 
 ACTION_TYPE_HINTS = {
-    "differentiate": "Clarify positioning between pages",
+    "differentiate": "Differentiate buyer intent and proof blocks per URL",
     "reposition": "Adjust intent targeting",
     "none": "No structural content change in this step",
 }
+
+
+def render_executive_summary(insight: dict) -> str:
+    """Top-of-report narrative: what, why, action, optional example, and meta (HTML-escaped)."""
+    esc = escape
+    cp = (insight.get("core_problem") or "").strip()
+    bi = (
+        (insight.get("why_it_matters") or insight.get("business_impact") or "")
+        .strip()
+    )
+    rec = (
+        (insight.get("primary_action") or insight.get("recommendation") or "")
+        .strip()
+    )
+    ex = (insight.get("execution_example") or "").strip()
+    conf = (insight.get("confidence") or "High").strip() or "High"
+    imp = (insight.get("impact_level") or "High").strip() or "High"
+    blocks = []
+    if cp:
+        h_whats = esc("What's happening")
+        blocks.append(
+            f'<h2 style="margin: 18px 0 8px 0; font-size: 1.05rem; font-weight: 700;">'
+            f"{h_whats}</h2>"
+            f'<p style="margin: 0; font-size: 1.02rem; line-height: 1.5;">{esc(cp)}</p>'
+        )
+    if bi:
+        blocks.append(
+            f'<h2 style="margin: 18px 0 8px 0; font-size: 1.05rem; font-weight: 700;">'
+            f'{esc("Why it matters")}</h2>'
+            f'<p style="margin: 0; font-size: 1.02rem; line-height: 1.5;">{esc(bi)}</p>'
+        )
+    if rec:
+        blocks.append(
+            f'<h2 style="margin: 18px 0 8px 0; font-size: 1.05rem; font-weight: 700;">'
+            f'{esc("What to do")}</h2>'
+            f'<p style="margin: 0; font-size: 1.02rem; line-height: 1.5;">{esc(rec)}</p>'
+        )
+    if ex:
+        blocks.append(
+            f'<h2 style="margin: 18px 0 8px 0; font-size: 1.05rem; font-weight: 700;">'
+            f'{esc("Execution example")}</h2>'
+            f'<p style="margin: 0; font-size: 1.02rem; line-height: 1.5;">{esc(ex)}</p>'
+        )
+    if not blocks:
+        return ""
+    meta = (
+        f'<div class="exec-meta" style="display: flex; flex-wrap: wrap; gap: 16px; margin-top: 18px; '
+        f'padding-top: 14px; border-top: 1px solid #dee2e6; font-size: 0.88rem; color: #495057;">'
+        f"<span><strong>{esc('Confidence:')}</strong> {esc(conf)}</span>"
+        f"<span><strong>{esc('Impact:')}</strong> {esc(imp)}</span>"
+        f"</div>"
+    )
+    return (
+        '<div class="exec-summary" style="margin-bottom: 28px; padding: 22px 26px; '
+        "background: #ffffff; border: 1px solid #e0e3e8; border-radius: 10px; "
+        'box-shadow: 0 1px 4px rgba(0,0,0,0.05);">'
+        f'{"".join(blocks)}'
+        f"{meta}"
+        "</div>"
+    )
+
+
+def _roadmap_step_heading(esc, step, title: str) -> str:
+    t = (title or "").strip()
+    try:
+        n = int(step)
+        sn = str(n)
+    except (TypeError, ValueError):
+        sn = str(step).strip() if str(step).strip() else "?"
+    if t:
+        return esc(f"Step {sn} — {t}")
+    return esc(f"Step {sn}")
 
 
 def render_technical_seo_fixes(esc, clusters: list) -> str:
@@ -90,8 +175,8 @@ def render_technical_seo_fixes(esc, clusters: list) -> str:
         )
     body = "".join(cards)
     tech_h2 = (
-        f'{esc("Technical SEO fixes")}'
-        f'{render_tooltip("These are structural URL issues (canonical, slash, hostname variants). These do not require content changes and should be fixed first.")}'
+        f'{esc("Technical cleanup (quick wins)")}'
+        f'{render_tooltip("Canonical, slash, and hostname variants. Fix these before larger content work.")}'
     )
     return (
         f"<div {_SECTION}>"
@@ -100,45 +185,6 @@ def render_technical_seo_fixes(esc, clusters: list) -> str:
         f"{esc('Canonical duplicates, trailing-slash or hostname variants, and homepage aliases—not content strategy items.')}</p>"
         f"{body}"
         "</div>"
-    )
-
-
-def render_methodology() -> str:
-    esc = escape
-    items = [
-        (
-            "Exact duplication",
-            "Identical or near-identical content across URLs (high embedding similarity).",
-        ),
-        (
-            "Intent overlap",
-            "Different pages competing for the same user goal or search intent.",
-        ),
-        (
-            "Structural duplication",
-            "Same page pattern or section with minimal substantive differentiation.",
-        ),
-        (
-            "Cross-market reuse",
-            "Content reused across regions without sufficient localization.",
-        ),
-        (
-            "Navigational redundancy",
-            "Parallel or competing entry points (e.g. mirrored structural paths).",
-        ),
-    ]
-    rows = "".join(
-        f"<li style=\"margin-bottom: 10px;\"><strong>{esc(t)}</strong> — {esc(d)}</li>"
-        for t, d in items
-    )
-    return (
-        f"<div {_SECTION}>"
-        f'<h2 style="margin: 0 0 12px 0; font-size: 1.15rem;">'
-        f'{esc("How to read this report")}</h2>'
-        f'<p style="margin: 0 0 12px 0; color: #5c6370;">'
-        f"{esc('Duplication types used in this audit:')}</p>"
-        f'<ul style="margin: 0; padding-left: 1.2em;">{rows}</ul>'
-        f"</div>"
     )
 
 
@@ -165,28 +211,23 @@ def _overlap_rate_metric_block(esc, row: dict, fallback_metrics: dict) -> str:
         f"{esc(benchmark)} — {esc('high duplication footprint')}"
         "</div>"
         f'<p style="margin: 10px 0 0 0; font-size: 0.92rem; color: #343a40;">'
-        f'<strong>{esc("Why it matters")}:</strong> {implication}</p>'
+        f'<strong>{esc("Readout")}:</strong> {implication}</p>'
         "</div>"
     )
 
 
-def _decision_frame_block(esc, ai: dict, metrics: dict) -> str:
-    conf = (ai.get("confidence") or "").strip()
-    primary = (ai.get("core_problem") or "").strip()
+def _decision_frame_block(
+    esc, ai: dict, metrics: dict, strategic_cluster_count: int
+) -> str:
     secondary = (ai.get("secondary_issue") or "").strip()
     overlap = _safe_float(metrics.get("overlap_rate"))
     weights = get_scoring_weights()
+    urgency = classify_urgency(overlap, strategic_cluster_count)
     parts_inner = []
-    if conf:
-        parts_inner.append(
-            f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
-            f"<strong>{esc('Decision confidence:')}</strong> {esc(conf)}</p>"
-        )
-    if primary:
-        parts_inner.append(
-            f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
-            f"<strong>{esc('Primary issue:')}</strong> {esc(primary)}</p>"
-        )
+    parts_inner.append(
+        f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
+        f"<strong>{esc('Time sensitivity:')}</strong> {esc(urgency)}</p>"
+    )
     if secondary:
         parts_inner.append(
             f'<p style="margin: 0 0 10px 0; font-size: 0.95rem;">'
@@ -231,7 +272,10 @@ def _metrics_explained_table(esc, rows: list, fallback_metrics: dict) -> str:
             {
                 "metric": "avg_cluster_similarity",
                 "value": str(fallback_metrics.get("avg_cluster_similarity", "")),
-                "implication": "Mean embedding similarity inside duplicate clusters.",
+                "implication": (
+                    "Near 1.0 means paired pages are indistinguishable in purpose and compete "
+                    "for the same user decision."
+                ),
             },
             {
                 "metric": "content_uniqueness_score",
@@ -267,13 +311,13 @@ def _metrics_explained_table(esc, rows: list, fallback_metrics: dict) -> str:
             f'<p style="margin: 0 0 8px 0; font-size: 1.2rem; font-weight: 700;">'
             f'{esc(str(row.get("value", "")))}</p>'
             f'<p style="margin: 0; font-size: 0.92rem; color: #343a40;">'
-            f'<strong>{esc("Why it matters")}:</strong> {esc(str(row.get("implication", "")))}</p>'
+            f'<strong>{esc("Readout")}:</strong> {esc(str(row.get("implication", "")))}</p>'
             "</div>"
         )
     return "".join(inner) or f"<p>{esc('(No metrics rows.)')}</p>"
 
 
-def _primary_drivers_block(esc, primary_clusters: list) -> str:
+def _cluster_inventory_block(esc, primary_clusters: list) -> str:
     if not primary_clusters:
         return ""
     lis = "".join(
@@ -282,7 +326,9 @@ def _primary_drivers_block(esc, primary_clusters: list) -> str:
     return (
         '<div style="margin-top: 18px; padding: 14px 16px; background: #f8f9fa; '
         'border-radius: 8px; border: 1px solid #e9ecef;">'
-        f'<p style="margin: 0 0 10px 0; font-weight: 700;">{esc("Primary drivers of this issue")}</p>'
+        f'<p style="margin: 0 0 10px 0; font-weight: 700;">{esc("Clusters in this crawl")}</p>'
+        f'<p style="margin: 0 0 10px 0; font-size: 0.88rem; color: #5c6370;">'
+        f"{esc('URL groupings from this run.')}</p>"
         f'<ul style="margin: 0; padding-left: 1.2em;">{lis}</ul>'
         "</div>"
     )
@@ -312,6 +358,9 @@ def generate_report(
     report_metrics: dict,
     ai_insights: dict,
     execution_roadmap: dict,
+    *,
+    site_structure: dict | None = None,
+    single_site_mode: bool = False,
 ):
     high = sum(1 for f in findings if f.get("priority") == "HIGH")
     med = sum(1 for f in findings if f.get("priority") == "MEDIUM")
@@ -325,22 +374,29 @@ def generate_report(
     ai = ai_insights or {}
     rm = execution_roadmap or {}
     metrics = report_metrics or {}
+    strategic_cluster_count = sum(
+        1 for c in (clusters or []) if c.get("decision_type") in REMEDIATION_DECISION_TYPES
+    )
 
     parts = [
         f"<div {_WRAPPER}>",
         '<h1 style="margin: 0 0 6px 0; font-size: 1.85rem; font-weight: 800;">'
         f'{esc("Sites audit")}</h1>',
         '<p style="margin: 0 0 20px 0; color: #5c6370; font-size: 0.95rem;">'
-        f"{esc('POV backed by URLs and metrics — execution sequenced below.')}</p>",
+        f"{esc('What we found and what to do next.')}</p>",
     ]
 
-    parts.append(render_methodology())
-    parts.append(render_technical_seo_fixes(esc, clusters))
+    parts.append(render_executive_summary(ai))
 
-    # Verdict
+    # Verdict + framing (core_problem appears only in executive summary above)
+    parts.append(f"<div {_SECTION}>")
+    h_wrong = esc("What's going wrong")
+    parts.append(
+        f'<h2 style="margin: 0 0 16px 0; font-size: 1.2rem;">{h_wrong}</h2>'
+    )
     verdict = ai.get("verdict") or "No verdict available."
     parts.append(
-        '<div style="margin-bottom: 28px; padding: 22px 26px; background: #1a1d24; '
+        '<div style="margin-bottom: 20px; padding: 22px 26px; background: #1a1d24; '
         'color: #f8f9fa; border-radius: 10px;">'
         f'<p style="margin: 0 0 8px 0; font-size: 0.7rem; text-transform: uppercase; '
         f'letter-spacing: 0.12em; color: #adb5bd;">{esc("Verdict")}</p>'
@@ -348,49 +404,24 @@ def generate_report(
         f"{esc(verdict)}</p>"
         "</div>"
     )
-
-    parts.append(_decision_frame_block(esc, ai, metrics))
-
-    # Key metrics (interpreted)
-    parts.append(f"<div {_SECTION}>")
-    parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Key metrics")}</h2>'
-    )
-    parts.append(
-        _metrics_explained_table(
-            esc, ai.get("metrics_explained") or [], metrics
+    pt = (ai.get("problem_type") or "").strip()
+    if pt:
+        parts.append(
+            f'<p style="margin: 0 0 16px 0; font-size: 0.9rem; color: #495057;">'
+            f"<strong>{esc('Assessment:')}</strong> {esc(pt)}</p>"
         )
-    )
+    parts.append(_decision_frame_block(esc, ai, metrics, strategic_cluster_count))
+    parts.append(_core_block(esc, "If you wait", ai.get("inaction_risk", "")))
+    parts.append(_cluster_inventory_block(esc, ai.get("primary_clusters") or []))
     parts.append("</div>")
 
-    # Core analysis
-    core_h2 = (
-        f'{esc("Core analysis")}'
-        f'{render_tooltip("Narrative interpretation of the verdict, root problem, business impact, and risk of inaction—grounded in this crawl’s clusters and metrics.")}'
+    roadmap_h2 = (
+        f'{esc("What to do next")}'
+        f'{render_tooltip("Concrete steps. Verify in staging before release.")}'
     )
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 16px 0; font-size: 1.2rem;">{core_h2}</h2>'
-    )
-    parts.append(_core_block(esc, "Core problem", ai.get("core_problem", "")))
-    parts.append(_core_block(esc, "Recommendation", ai.get("recommendation", "")))
-    parts.append(_core_block(esc, "Business impact", ai.get("business_impact", "")))
-    parts.append(_core_block(esc, "If no action is taken", ai.get("inaction_risk", "")))
-    parts.append(_primary_drivers_block(esc, ai.get("primary_clusters") or []))
-    parts.append("</div>")
-
-    # 30-day roadmap
-    exec_h2 = (
-        f'{esc("30-day execution plan")}'
-        f'{render_tooltip("Ordered, assignable actions (merge, redirect, differentiate, etc.). Each step should be verifiable in staging before release.")}'
-    )
-    parts.append(f"<div {_SECTION}>")
-    parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{exec_h2}</h2>'
-    )
-    parts.append(
-        '<p style="margin: 0 0 16px 0; color: #5c6370; font-size: 0.92rem;">'
-        f"{esc('Ordered by impact — concrete steps only.')}</p>"
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{roadmap_h2}</h2>'
     )
     for item in rm.get("roadmap") or []:
         if not isinstance(item, dict):
@@ -402,21 +433,22 @@ def generate_report(
         outcome = item.get("expected_outcome") or item.get("expected_impact") or ""
         urls = item.get("target_urls") or item.get("affected_urls") or []
         evrefs = item.get("evidence_refs") or []
-        badge = (
-            f'<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; '
-            f'background: #198754; color: #fff; font-size: 0.75rem; font-weight: 600; '
-            f'margin-right: 8px;">{esc(str(at).upper())}</span>'
-        )
-        hint = ACTION_TYPE_HINTS.get(str(at).lower().strip(), "")
+        at_label = str(at).strip().lower()
+        hint = ACTION_TYPE_HINTS.get(at_label, "")
         parts.append(
             '<div style="border-left: 4px solid #198754; padding: 14px 16px; margin-bottom: 12px; '
             'background: #f6fff9; border-radius: 0 8px 8px 0;">'
-            f'<p style="margin: 0 0 8px 0;">{badge}'
-            f'<span style="font-weight: 700;">{esc(str(step))}. {esc(title)}</span></p>'
+            f'<p style="margin: 0 0 4px 0; font-weight: 700; font-size: 1.02rem;">'
+            f"{_roadmap_step_heading(esc, step, title)}</p>"
         )
+        if at_label and at_label != "none":
+            parts.append(
+                f'<p style="margin: 0 0 8px 0; font-size: 0.78rem; color: #6c757d; '
+                f'text-transform: capitalize;">{esc(at_label)}</p>'
+            )
         if hint:
             parts.append(
-                f'<p style="margin: -4px 0 10px 4px; font-size: 0.82rem; color: #495057;">'
+                f'<p style="margin: 0 0 10px 0; font-size: 0.82rem; color: #495057;">'
                 f"{esc(hint)}</p>"
             )
         parts.append(
@@ -463,11 +495,14 @@ def generate_report(
         parts.append("</div>")
     parts.append("</div>")
 
-    # Supporting evidence
+    # Proof (URLs + metrics only; no repeat of executive narrative)
     parts.append(f"<div {_SECTION}>")
     parts.append(
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
-        f'{esc("Supporting evidence")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Proof")}</h2>'
+    )
+    parts.append(
+        '<p style="margin: 0 0 14px 0; color: #5c6370; font-size: 0.92rem;">'
+        f"{esc('Numbers and URLs that back the sections above.')}</p>"
     )
     for ev in ai.get("supporting_evidence") or []:
         if not isinstance(ev, dict):
@@ -497,11 +532,20 @@ def generate_report(
         parts.append("</div>")
     parts.append("</div>")
 
-    # Content health score
+    # Severity: interpreted metrics + overall score
     parts.append(f"<div {_SECTION}>")
     parts.append(
         f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">'
-        f'{esc("Content health score")}</h2>'
+        f'{esc("How bad this is")}</h2>'
+    )
+    parts.append(
+        _metrics_explained_table(
+            esc, ai.get("metrics_explained") or [], metrics
+        )
+    )
+    parts.append(
+        f'<h3 style="margin: 22px 0 12px 0; font-size: 1.05rem;">'
+        f'{esc("Content health score")}</h3>'
     )
     parts.append(f"<div {_SCORE_BOX}>")
     parts.append(
@@ -512,6 +556,12 @@ def generate_report(
     parts.append(
         f'<p style="margin: 0 0 12px 0; font-weight: 600;">{esc(label)}</p>'
     )
+    parts.append(
+        f'<p style="margin: 0 0 14px 0; font-size: 0.95rem; color: #343a40;">'
+        f"<strong>{esc('Score impact:')}</strong> "
+        f"{esc('This issue is the primary driver behind the Content Quality score of')} "
+        f"{esc(str(score))}{esc('.')}</p>"
+    )
     parts.append(f"<p style=\"margin: 0; font-size: 0.9em;\"><strong>{esc('Grouped themes:')}</strong></p><ul>")
     if grouped_issues:
         for g in grouped_issues[:4]:
@@ -519,6 +569,8 @@ def generate_report(
     else:
         parts.append(f"<li>{esc('None detected in this run')}</li>")
     parts.append("</ul></div></div>")
+
+    parts.append(render_technical_seo_fixes(esc, clusters))
 
     # Summary
     parts.append(f"<div {_SECTION}>")
@@ -531,6 +583,15 @@ def generate_report(
     parts.append(f"<li>{esc('High priority findings:')} {high}</li>")
     parts.append(f"<li>{esc('Medium priority findings:')} {med}</li>")
     parts.append(f"<li>{esc('Low priority findings:')} {low}</li>")
+    if single_site_mode and site_structure:
+        dist = (site_structure.get("intent_distribution") or {}) if isinstance(site_structure, dict) else {}
+        parts.append(
+            f"<li>{esc('Funnel stages (page counts):')} "
+            f"{esc(str(dist.get('awareness', 0)))} {esc('awareness')}, "
+            f"{esc(str(dist.get('consideration', 0)))} {esc('consideration')}, "
+            f"{esc(str(dist.get('decision', 0)))} {esc('decision')}"
+            f"</li>"
+        )
     parts.append("</ul></div>")
 
     # AI readiness
@@ -580,6 +641,19 @@ def generate_report(
             f"<span style=\"color:#495057;\">{esc(dup_t)}</span> "
             f"({esc(market)}) <span>[{esc(pri)}]</span></p>"
         )
+        cs = f.get("classification_summary") or {}
+        dc = f.get("duplication_class")
+        if cs or dc:
+            assess = _duplication_assessment_label(dc)
+            parts.append(
+                '<div class="cluster-meta" style="display: flex; flex-wrap: wrap; gap: 10px; '
+                'font-size: 0.86rem; color: #495057; margin: 0 0 10px 0;">'
+                f'<span><strong>{esc("Type")}:</strong> {esc(str(cs.get("dominant_type", "—")))}</span>'
+                f'<span><strong>{esc("Intent")}:</strong> {esc(str(cs.get("dominant_intent", "—")))}</span>'
+                f'<span><strong>{esc("Stage")}:</strong> {esc(str(cs.get("dominant_stage", "—")))}</span>'
+                f'<span><strong>{esc("Assessment")}:</strong> {esc(assess)}</span>'
+                "</div>"
+            )
         parts.append(f"<p>{esc('Action:')} {esc(action)}</p>")
         parts.append(f"<p>{esc('Similarity:')} {esc(str(sim))}</p>")
         dom = f.get("dominant_url")

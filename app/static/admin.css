@@ -1,0 +1,214 @@
+.admin-body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a1a;
+}
+
+.admin-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.admin-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 20px 16px;
+}
+
+.admin-brand {
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0 0 20px 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #334155;
+}
+
+.admin-nav-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  margin: 16px 0 8px 0;
+}
+
+.admin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-nav a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 0.92rem;
+}
+
+.admin-nav a:hover {
+  background: #334155;
+  color: #fff;
+}
+
+.admin-nav a.active {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.admin-nav-footer {
+  margin-top: 24px;
+  font-size: 0.85rem;
+}
+
+.admin-nav-footer a {
+  color: #94a3b8;
+}
+
+.admin-main {
+  flex: 1;
+  padding: 28px 36px;
+  max-width: 960px;
+}
+
+.admin-page-title {
+  margin: 0 0 20px 0;
+  font-size: 1.5rem;
+}
+
+.admin-muted {
+  color: #64748b;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.rule-section {
+  margin-bottom: 36px;
+  padding: 20px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+}
+
+.rule-section h2 {
+  margin: 0 0 16px 0;
+  font-size: 1.1rem;
+}
+
+.rule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rule-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.rule-form input[type="text"],
+.rule-form input[type="number"],
+.rule-form textarea {
+  font-weight: 400;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.rule-form textarea {
+  resize: vertical;
+}
+
+.rule-form .checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.rule-form button {
+  align-self: flex-start;
+  padding: 10px 18px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rule-form button:hover {
+  background: #1d4ed8;
+}
+
+.rule-cards h2 {
+  font-size: 1.1rem;
+  margin: 0 0 16px 0;
+}
+
+.rule-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.rule-card.rule-inactive {
+  opacity: 0.65;
+}
+
+.rule-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.rule-card-head h3 {
+  margin: 0;
+  flex: 1;
+  min-width: 140px;
+  font-size: 1.05rem;
+}
+
+.rule-priority {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.inline-form {
+  display: inline;
+  margin: 0;
+}
+
+.btn-toggle {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.btn-danger {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background: #dc2626;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
