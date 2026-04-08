@@ -74,7 +74,7 @@ ACTION_TYPE_HINTS = {
 }
 
 
-def render_executive_summary(insight: dict) -> str:
+def render_insight_narrative_html(insight: dict) -> str:
     """Top-of-report narrative: what, why, action, optional example, and meta (HTML-escaped)."""
     esc = escape
     cp = (insight.get("core_problem") or "").strip()
@@ -134,6 +134,23 @@ def render_executive_summary(insight: dict) -> str:
         'box-shadow: 0 1px 4px rgba(0,0,0,0.05);">'
         f'{"".join(blocks)}'
         f"{meta}"
+        "</div>"
+    )
+
+
+def render_client_executive_brief_html(brief: str) -> str:
+    """Phase 6 client executive layer (plain text, pre-wrapped, HTML-escaped)."""
+    b = (brief or "").strip()
+    if not b:
+        return ""
+    esc = escape
+    return (
+        f"<div {_SECTION}>"
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Executive brief")}</h2>'
+        '<p style="margin: 0 0 10px 0; color: #5c6370; font-size: 0.92rem;">'
+        f"{esc('Prioritized issues, plan, and risks in business language.')}</p>"
+        f'<div style="white-space: pre-wrap; font-size: 0.98rem; line-height: 1.5; margin: 0;">'
+        f"{esc(b)}</div>"
         "</div>"
     )
 
@@ -390,7 +407,10 @@ def generate_report(
         f"{esc('What we found and what to do next.')}</p>",
     ]
 
-    parts.append(render_executive_summary(ai))
+    exec_brief = (ai.get("executive_summary_text") or "").strip()
+    if exec_brief:
+        parts.append(render_client_executive_brief_html(exec_brief))
+    parts.append(render_insight_narrative_html(ai))
 
     # Verdict + framing (core_problem appears only in executive summary above)
     parts.append(f"<div {_SECTION}>")

@@ -46,7 +46,18 @@ from app.ai_insights import (
     validate_roadmap_output,
 )
 from app.business_context import build_business_context
+from app.priority_scoring import (
+    build_structural_execution_issues,
+    compute_structural_priority,
+)
 from app.transformation_spec import build_transformation_spec
+from app.executive_summary import (
+    build_executive_summary_data,
+    render_executive_summary,
+    render_executive_summary_llm,
+    validate_executive_alignment,
+    validate_executive_output,
+)
 from app.report import generate_report
 from app.utils import canonicalize_url
 from app.db.session import init_db
@@ -287,6 +298,13 @@ def _run_audit_job(site_list: list[str]) -> None:
             "technical_fix_urls": technical_fix_urls,
             "dominant_problem_type": derive_problem_type(clusters),
         }
+        _pri = compute_structural_priority(analysis_payload)
+        analysis_payload["priority_score"] = _pri["priority_score"]
+        analysis_payload["priority_level"] = _pri["priority_level"]
+        analysis_payload["structural_execution_order"] = build_structural_execution_issues(
+            analysis_payload,
+            strategic_rows,
+        )
         analysis_payload["transformation_spec"] = build_transformation_spec(
             analysis_payload
         )
@@ -347,6 +365,26 @@ def _run_audit_job(site_list: list[str]) -> None:
 
         _set_phase("Finalizing narrative and HTML report…")
         ai_insights = enrich_insights_decision_layer(ai_insights, analysis_payload)
+
+        analysis_payload["site_health_score"] = int(round(float(score)))
+        summary_data = build_executive_summary_data(analysis_payload, ai_insights)
+        validate_executive_alignment(summary_data)
+        exec_body = render_executive_summary(summary_data)
+        validate_executive_output(exec_body, summary_data)
+        if os.getenv("OPENAI_API_KEY"):
+            try:
+                llm_ex = LLMClient()
+                polished = render_executive_summary_llm(summary_data, llm_ex)
+                if polished:
+                    try:
+                        validate_executive_output(polished, summary_data)
+                        exec_body = polished
+                    except ValueError:
+                        pass
+            except Exception:
+                pass
+        ai_insights["executive_summary_data"] = summary_data
+        ai_insights["executive_summary_text"] = exec_body
 
         report = generate_report(
             all_findings,

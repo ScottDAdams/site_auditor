@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from app.analyzer import REMEDIATION_DECISION_TYPES
 from app.business_context import is_cross_domain
+from app.transformation_types import infer_transformation_type, keep_both_for_type
 
 
 def _market_label_from_url(url: str) -> str:
@@ -89,6 +90,15 @@ def _sample_urls_for_spec(payload: dict) -> tuple[list[str], str]:
     return sample_urls, rel
 
 
+def _count_cluster_urls(first: dict | None, sample_urls: list[str]) -> int:
+    if not first:
+        return max(len(sample_urls), 1)
+    pages = first.get("pages") or []
+    if pages:
+        return max(len(pages), len(sample_urls), 1)
+    return max(1 + len(first.get("competing_urls") or []), len(sample_urls), 1)
+
+
 def build_transformation_spec(payload: dict) -> dict:
     """
     Build read-only transformation_spec before any LLM call.
@@ -102,6 +112,20 @@ def build_transformation_spec(payload: dict) -> dict:
     page_b_url = sample_urls[1] if len(sample_urls) > 1 else ""
 
     first = strategic[0] if strategic else {}
+    cluster_url_count = _count_cluster_urls(first, sample_urls)
+    try:
+        row_sim = float(first["similarity"]) if first and first.get("similarity") is not None else None
+    except (TypeError, ValueError):
+        row_sim = None
+    transformation_type = infer_transformation_type(
+        payload,
+        dominant,
+        relationship,
+        cluster_url_count,
+        row_similarity=row_sim,
+    )
+    keep_both = keep_both_for_type(transformation_type)
+
     ptype = (first.get("page_type") or "page").strip() or "page"
     intent = (first.get("intent") or "this topic").strip() or "this topic"
     stage = (first.get("decision_stage") or "").strip()
@@ -128,7 +152,14 @@ def build_transformation_spec(payload: dict) -> dict:
         add_a = ["One rel=canonical target and consolidated internal links"]
         add_b = ["301 or canonical directives so aliases collapse to the canonical URL"]
     elif dominant == "strategic":
-        if relationship == "cross_market" and page_a_url and page_b_url:
+        if not keep_both:
+            role_a = "Single canonical page holds merged content for this topic."
+            role_b = "Duplicate URL retires; traffic and signals route to the canonical page."
+            remove_a = ["Redundant blocks mirrored on duplicate indexable URLs"]
+            remove_b = ["Indexable duplicate body that repeats the canonical intent"]
+            add_a = ["Unified page body with one clear H1 and consolidated proof"]
+            add_b = ["301 redirect to canonical URL and updated internal links"]
+        elif relationship == "cross_market" and page_a_url and page_b_url:
             ma = _market_label_from_url(page_a_url)
             mb = _market_label_from_url(page_b_url)
             role_a = f"{ma} market page: coverage, pricing, and claims for {ma} buyers."
@@ -172,12 +203,22 @@ def build_transformation_spec(payload: dict) -> dict:
         "page_type_signal": ptype,
         "intent_signal": intent,
         "decision_stage_signal": stage,
+        "transformation_type": transformation_type,
+        "keep_both": keep_both,
+        "cluster_url_count": cluster_url_count,
     }
 
 
 def render_core_problem(payload: dict, spec: dict) -> str:
     dominant = (spec.get("dominant_problem_type") or "acceptable").strip().lower()
     rel = spec.get("cluster_relationship") or "unknown"
+    tt = (spec.get("transformation_type") or "").strip().lower()
+    if dominant == "strategic" and tt in ("merge", "redirect", "consolidate"):
+        return (
+            "Near-duplicate pages should collapse to one canonical indexable answer per topic."
+        )
+    if dominant == "strategic" and tt == "isolate":
+        return "High same-market similarity blurs distinct buyer jobs per URL."
     if dominant == "strategic" and rel == "cross_market":
         return (
             "Regional URLs target the same buyer decision without market-specific separation."
@@ -203,6 +244,9 @@ def _cross_market_restriction_clause(url: str) -> str:
 def render_primary_action(spec: dict) -> str:
     dominant = (spec.get("dominant_problem_type") or "acceptable").strip().lower()
     u1, u2 = spec.get("page_a_url") or "", spec.get("page_b_url") or ""
+    tt = (spec.get("transformation_type") or "").strip().lower()
+    ncc = int(spec.get("cluster_url_count") or 0) or 2
+    kb = spec.get("keep_both", True)
 
     if dominant == "acceptable":
         anchor = u1 or u2 or "sampled URLs"
@@ -215,7 +259,35 @@ def render_primary_action(spec: dict) -> str:
             )
         return f"301 duplicate paths to {u1}; set rel=canonical on non-canonical URLs."
 
+    if dominant == "strategic" and not kb and u1 and not u2:
+        return f"Consolidate duplicate URLs into one canonical destination at {u1}."
+
+    if dominant == "strategic" and not kb and u1 and u2:
+        if tt == "merge":
+            return (
+                f"Merge overlapping content from {u2} into {u1}; remove duplicate indexable URL "
+                f"and consolidate internal links."
+            )
+        if tt == "redirect":
+            return (
+                f"301 {u2} to {u1}; remove duplicate indexable surface and route signals to the canonical URL."
+            )
+        if tt == "consolidate":
+            if ncc > 2:
+                return (
+                    f"Consolidate {ncc} competing URLs into one canonical destination at {u1}; "
+                    f"301 or rel=canonical all alternates including {u2}."
+                )
+            return (
+                f"Consolidate competing URLs into {u1}; 301 or rel=canonical alternates including {u2}."
+            )
+
     if dominant == "strategic" and u1 and u2:
+        if tt == "isolate":
+            return (
+                f"Isolate intent per URL: remove overlapping blocks on {u1} and {u2} "
+                f"so each page owns a distinct buyer job."
+            )
         if spec.get("cluster_relationship") == "cross_market":
             c1 = _cross_market_restriction_clause(u1)
             c2 = _cross_market_restriction_clause(u2)

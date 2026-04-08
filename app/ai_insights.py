@@ -665,6 +665,16 @@ def generate_ai_insights(payload, llm_client):
         spec = build_transformation_spec(payload)
 
     rendered = render_insights_from_spec(payload, dominant, spec)
+    if "priority_score" not in payload or "priority_level" not in payload:
+        from app.priority_scoring import compute_structural_priority
+
+        _ps = compute_structural_priority(payload)
+        priority_score = _ps["priority_score"]
+        priority_level = _ps["priority_level"]
+    else:
+        priority_score = payload.get("priority_score")
+        priority_level = payload.get("priority_level")
+
     final_output = {
         "core_problem": rendered["core_problem"],
         "page_a_role": rendered["page_a_role"],
@@ -674,6 +684,10 @@ def generate_ai_insights(payload, llm_client):
         "execution_example": rendered["execution_example"],
         "transformation_spec": rendered["transformation_spec"],
         "insights_rendered_from_spec": True,
+        "transformation_type": spec.get("transformation_type"),
+        "keep_both": spec.get("keep_both"),
+        "priority_score": priority_score,
+        "priority_level": priority_level,
         "problem_type": dominant,
         "confidence": "High",
         "impact": "Moderate",

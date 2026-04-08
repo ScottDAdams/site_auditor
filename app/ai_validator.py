@@ -336,6 +336,8 @@ def validate_problem_action_alignment(data: dict) -> None:
     """primary_action must match the fixed problem_type (alignment only)."""
     pt = (data.get("problem_type") or "").strip().lower()
     action = (data.get("primary_action") or "").lower()
+    tt = (data.get("transformation_type") or "").strip().lower()
+    allow_tech_verbs = tt in ("merge", "redirect", "consolidate")
 
     if pt == "acceptable" and any(x in action for x in ["differentiate", "reposition"]):
         raise ValueError("Acceptable problems cannot require strategic-style actions")
@@ -344,7 +346,22 @@ def validate_problem_action_alignment(data: dict) -> None:
         raise ValueError("Technical problems cannot require strategic actions")
 
     if pt == "strategic" and any(x in action for x in ["redirect", "canonical"]):
-        raise ValueError("Strategic problems should not default to technical fixes")
+        if not allow_tech_verbs:
+            raise ValueError("Strategic problems should not default to technical fixes")
+
+
+def validate_primary_action_matches_transformation_type(data: dict) -> None:
+    """Block contradictions between transformation_type and primary_action wording."""
+    tt = (data.get("transformation_type") or "").strip().lower()
+    pa = (data.get("primary_action") or "").strip()
+    if not tt or not pa:
+        return
+    low = pa.lower()
+    if tt in ("merge", "redirect", "consolidate") and re.search(r"\bdifferentiate\b", low):
+        raise ValueError(
+            f"[rule:primary_action_vs_type] primary_action must not use 'differentiate' "
+            f"when transformation_type is {tt!r}"
+        )
 
 
 def validate_no_vague_language(data: dict) -> None:
@@ -469,6 +486,7 @@ def validate_ai_output_strict(
     validate_no_vague_language(data)
     validate_problem_type_matches_dominant(data, dominant_problem_type)
     validate_problem_action_alignment(data)
+    validate_primary_action_matches_transformation_type(data)
     validate_primary_action_hard_constraints(str(data.get("primary_action") or ""))
     validate_length(data)
     validate_why_it_matters_stake(str(data.get("why_it_matters") or ""))
