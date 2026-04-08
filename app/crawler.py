@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from app.analyzer import classify_page as classify_page_metadata
 
@@ -128,6 +128,22 @@ def crawl_site(base_url, max_pages=20):
         rule_type = infer_rule_page_type(url, text)
         print(f"CLASSIFIED: {url} → {rule_type}")
         classification = classify_page_metadata(url, title, text)
+
+        base_domain = get_domain(base_url)
+        internal_out: list[str] = []
+        for link in soup.find_all("a", href=True):
+            href = (link.get("href") or "").strip()
+            if not href or href.startswith("#") or href.startswith("mailto:"):
+                continue
+            if href.startswith("javascript:"):
+                continue
+            full = urljoin(url, href)
+            if get_domain(full) != base_domain:
+                continue
+            full = full.split("#")[0].rstrip("/") or full
+            internal_out.append(full)
+        internal_out = list(dict.fromkeys(internal_out))
+
         page = {
             "url": url,
             "path": path,
@@ -138,6 +154,7 @@ def crawl_site(base_url, max_pages=20):
             "type": rule_type,
             "content": text,
             "classification": classification,
+            "internal_links_out": internal_out,
         }
         pages.append(page)
 

@@ -48,8 +48,32 @@ class TestUIPhase6b(unittest.TestCase):
         snap = json.dumps(
             {
                 "executive_summary_data": {
+                    "ceo_summary": {
+                        "paragraphs": [
+                            "Your site splits focus across one key area. That caps how well you can be found and capture demand.",
+                            "Fix the lead conflict before you add pages or paid reach. Otherwise you compound the split.",
+                            "Ignore this and you keep competing against yourself—paid acquisition replaces clarity you could fix in structure.",
+                        ]
+                    },
+                    "expected_outcome": {
+                        "bullets": [
+                            "Stronger authority on key pages.",
+                            "Clearer user paths.",
+                            "Better conversion capture.",
+                        ]
+                    },
                     "top_issues": [],
                     "execution_plan": [],
+                    "primary_bet": {
+                        "action": "Name one primary page for each major buyer decision before scaling spend.",
+                        "why_this_over_others": "Downstream teams and campaigns align only after that clarity exists.",
+                        "expected_effect": "Faster decisions, cleaner handoffs, and less duplicated storytelling.",
+                    },
+                    "impact_estimate": {
+                        "impact_level": "Medium",
+                        "confidence": "Directional",
+                        "reasoning": "Heuristic materiality from this crawl only—not a revenue forecast.",
+                    },
                     "site_health": {
                         "score": 70,
                         "primary_issue_type": "strategic",
@@ -73,8 +97,14 @@ class TestUIPhase6b(unittest.TestCase):
         try:
             r = self.client.get(f"/reports/{rid}")
             self.assertEqual(r.status_code, 200)
-            self.assertIn(b"Executive summary", r.content)
-            self.assertIn(b"Technical details", r.content)
+            self.assertIn(b"If you do one thing", r.content)
+            self.assertIn(b"Decision brief", r.content)
+            self.assertIn(b"CEO summary", r.content)
+            self.assertIn(b"View full technical audit", r.content)
+            tr = self.client.get(f"/reports/{rid}/technical")
+            self.assertEqual(tr.status_code, 200)
+            self.assertIn(b"Full technical output", tr.content)
+            self.assertIn(b"Technical body", tr.content)
         finally:
             with SessionLocal() as db:
                 row = db.get(AuditReport, rid)

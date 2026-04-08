@@ -146,7 +146,7 @@ def render_client_executive_brief_html(brief: str) -> str:
     esc = escape
     return (
         f"<div {_SECTION}>"
-        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Executive brief")}</h2>'
+        f'<h2 style="margin: 0 0 14px 0; font-size: 1.2rem;">{esc("Decision brief")}</h2>'
         '<p style="margin: 0 0 10px 0; color: #5c6370; font-size: 0.92rem;">'
         f"{esc('Prioritized issues, plan, and risks in business language.')}</p>"
         f'<div style="white-space: pre-wrap; font-size: 0.98rem; line-height: 1.5; margin: 0;">'

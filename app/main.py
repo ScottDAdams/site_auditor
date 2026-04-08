@@ -24,6 +24,7 @@ from app.analyzer import (
     analyze_site_structure,
     calculate_content_health_score,
     classify_cluster_decisions,
+    classify_page,
     compute_ai_readiness,
     detect_topic_overlap,
     group_findings,
@@ -54,8 +55,10 @@ from app.priority_scoring import (
 from app.transformation_spec import build_transformation_spec
 from app.executive_summary import (
     build_executive_summary_data,
+    render_ceo_summary,
     render_executive_summary,
     render_executive_summary_llm,
+    split_ceo_and_operational,
     validate_executive_alignment,
     validate_executive_output,
 )
@@ -231,6 +234,30 @@ def report_detail(request: Request, report_id: int):
             "es": snapshot.get("executive_summary_data") or {},
             "exec_text": snapshot.get("executive_summary_text") or "",
             "roadmap": snapshot.get("execution_roadmap") or {},
+        },
+    )
+
+
+@app.get("/reports/{report_id}/technical", response_class=HTMLResponse)
+def report_technical(request: Request, report_id: int):
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+    return templates.TemplateResponse(
+        request,
+        "pages/report_technical.html",
+        {
+            "request": request,
+            "title": "Technical audit",
+            "report": row,
+            "report_html": row.report_html,
+            "es": snapshot.get("executive_summary_data") or {},
+            "back_href": f"/reports/{report_id}",
         },
     )
 
@@ -415,6 +442,23 @@ def _run_audit_job(site_list: list[str]) -> None:
             "technical_fix_urls": technical_fix_urls,
             "dominant_problem_type": derive_problem_type(clusters),
         }
+        analysis_payload["pages"] = [
+            {
+                "url": p["url"],
+                "title": (p.get("title") or "")[:300],
+                "word_count": int(p.get("word_count") or 0),
+                "type": p.get("type") or "other",
+                "classification": p.get("classification")
+                or classify_page(
+                    p.get("url", ""),
+                    (p.get("title") or ""),
+                    (p.get("content") or p.get("text") or ""),
+                ),
+                "internal_links_out": p.get("internal_links_out") or [],
+                "text_sample": (p.get("text") or p.get("content") or "")[:3500],
+            }
+            for p in pages
+        ]
         _pri = compute_structural_priority(analysis_payload)
         analysis_payload["priority_score"] = _pri["priority_score"]
         analysis_payload["priority_level"] = _pri["priority_level"]
@@ -426,8 +470,9 @@ def _run_audit_job(site_list: list[str]) -> None:
             analysis_payload
         )
 
+        _ai_payload_exclude = frozenset({"strategic_clusters", "pages"})
         payload_for_ai = {
-            **{k: v for k, v in analysis_payload.items() if k != "strategic_clusters"},
+            **{k: v for k, v in analysis_payload.items() if k not in _ai_payload_exclude},
             "clusters": list(strategic_rows),
             "technical_fix_urls": technical_fix_urls,
         }
@@ -486,22 +531,30 @@ def _run_audit_job(site_list: list[str]) -> None:
         analysis_payload["site_health_score"] = int(round(float(score)))
         summary_data = build_executive_summary_data(analysis_payload, ai_insights)
         validate_executive_alignment(summary_data)
+        ceo_text = render_ceo_summary(summary_data)
         exec_body = render_executive_summary(summary_data)
-        validate_executive_output(exec_body, summary_data)
+        full_brief = f"{ceo_text}\n\n---\n\n{exec_body}"
+        validate_executive_output(full_brief, summary_data, operational_brief=exec_body)
+        exec_body_out = full_brief
         if os.getenv("OPENAI_API_KEY"):
             try:
                 llm_ex = LLMClient()
                 polished = render_executive_summary_llm(summary_data, llm_ex)
                 if polished:
                     try:
-                        validate_executive_output(polished, summary_data)
-                        exec_body = polished
+                        _, op_part = split_ceo_and_operational(polished)
+                        validate_executive_output(
+                            polished,
+                            summary_data,
+                            operational_brief=op_part or exec_body,
+                        )
+                        exec_body_out = polished
                     except ValueError:
                         pass
             except Exception:
                 pass
         ai_insights["executive_summary_data"] = summary_data
-        ai_insights["executive_summary_text"] = exec_body
+        ai_insights["executive_summary_text"] = exec_body_out
 
         report = generate_report(
             all_findings,
@@ -520,7 +573,7 @@ def _run_audit_job(site_list: list[str]) -> None:
 
         snapshot = {
             "executive_summary_data": summary_data,
-            "executive_summary_text": exec_body,
+            "executive_summary_text": exec_body_out,
             "execution_roadmap": execution_roadmap,
         }
         summary_metrics = {

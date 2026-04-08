@@ -1,0 +1,34 @@
+{% extends "layouts/report_technical.html" %}
+
+{% block title %}Technical audit{% endblock %}
+
+{% block main %}
+<article class="report-technical-doc">
+  <h1 class="report-technical-title">Technical audit</h1>
+  <p class="report-technical-meta">{{ report.domains }}</p>
+
+  <section class="report-technical-section">
+    <h2 class="report-technical-h2">Summary</h2>
+    <p class="report-technical-lead">
+      Crawl-backed findings, URLs, and signals for this audit. Use this as the evidence packet behind the decision brief.
+    </p>
+    <ul class="report-technical-summary-list">
+      <li><strong>Health score:</strong> {{ report.score }}</li>
+      {% if es and es.site_health %}
+      <li><strong>Structural risk:</strong> {{ es.site_health.risk_level | title }}</li>
+      <li><strong>Primary pattern:</strong> {{ es.site_health.primary_issue_type | title }}</li>
+      {% endif %}
+      {% if es and es.impact_estimate %}
+      <li><strong>Heuristic impact:</strong> {{ es.impact_estimate.impact_level }} ({{ es.impact_estimate.confidence }})</li>
+      {% endif %}
+    </ul>
+  </section>
+
+  <section class="report-technical-section report-technical-section--full">
+    <h2 class="report-technical-h2">Full technical output</h2>
+    <div class="report-technical-audit audit-report">
+      {{ report_html | safe }}
+    </div>
+  </section>
+</article>
+{% endblock %}

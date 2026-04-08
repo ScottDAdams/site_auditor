@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Technical audit{% endblock %} · Site Auditor</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/app-shell.css" />
+</head>
+<body class="report-technical-body">
+  <header class="report-technical-header">
+    <a href="{{ back_href | default('/reports') }}" class="report-technical-back">← Back to report</a>
+  </header>
+  <main class="report-technical-main">
+    {% block main %}{% endblock %}
+  </main>
+</body>
+</html>

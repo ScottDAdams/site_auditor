@@ -5,10 +5,13 @@ import unittest
 from app.executive_summary import (
     build_executive_summary_data,
     build_execution_plan,
+    estimate_impact,
     map_action_to_outcome,
     map_problem_to_business_impact,
+    render_ceo_summary,
     render_executive_summary,
     render_executive_summary_llm,
+    split_ceo_and_operational,
     validate_executive_alignment,
     validate_executive_output,
 )
@@ -17,7 +20,8 @@ from app.executive_summary import (
 class TestExecutiveBusinessTranslation(unittest.TestCase):
     def test_map_problem_merge(self):
         s = map_problem_to_business_impact("merge", {})
-        self.assertIn("ranking", s.lower())
+        self.assertIn("demand", s.lower())
+        self.assertNotIn("search visibility", s.lower())
         self.assertNotIn("overlap_rate", s.lower())
 
     def test_map_problem_differentiate(self):
@@ -26,7 +30,7 @@ class TestExecutiveBusinessTranslation(unittest.TestCase):
 
     def test_map_action_outcome_redirect(self):
         s = map_action_to_outcome("redirect")
-        self.assertIn("canonical", s.lower())
+        self.assertIn("one live url", s.lower())
 
 
 class TestExecutiveTopIssues(unittest.TestCase):
@@ -78,17 +82,26 @@ class TestExecutiveTopIssues(unittest.TestCase):
         data = build_executive_summary_data(p, insights)
         self.assertLessEqual(len(data["top_issues"]), 5)
         self.assertEqual(data["top_issues"][0]["transformation_type"], "merge")
-        self.assertIn("competing", data["top_issues"][0]["problem"].lower())
+        self.assertTrue(data["top_issues"][0].get("problem"))
+        self.assertIn("you should", data["top_issues"][0]["decision"].lower())
+        self.assertTrue(data["top_issues"][0]["business_consequence"])
+        self.assertTrue(data["primary_bet"]["action"])
+        self.assertEqual(estimate_impact(data)["impact_level"] in ("High", "Medium", "Low"), True)
 
     def test_no_metric_first_in_render(self):
         p = self._payload_base()
         insights = {"problem_type": "strategic"}
         data = build_executive_summary_data(p, insights)
+        ceo = render_ceo_summary(data)
         text = render_executive_summary(data)
+        full = f"{ceo}\n\n---\n\n{text}"
         validate_executive_alignment(data)
-        validate_executive_output(text, data)
-        self.assertNotRegex(text.lower(), r"overlap_rate\s+[0-9.]")
-        self.assertNotIn("avg_cluster_similarity", text.lower())
+        validate_executive_output(full, data, operational_brief=text)
+        self.assertNotRegex(full.lower(), r"overlap_rate\s+[0-9.]")
+        self.assertNotIn("avg_cluster_similarity", full.lower())
+        self.assertIn("SECTION 1: CEO SUMMARY", ceo)
+        self.assertIn("SECTION 3: WHAT'S BREAKING PERFORMANCE", full)
+        self.assertIn("SECTION 5: EXPECTED OUTCOME", full)
 
 
 class TestExecutionPlanOrdering(unittest.TestCase):
@@ -97,18 +110,19 @@ class TestExecutionPlanOrdering(unittest.TestCase):
             "top_issues": [
                 {
                     "transformation_type": "redirect",
-                    "recommended_action": "Redirect X to Y",
+                    "recommended_action": "You should redirect X to Y",
                     "urls": ["https://y.com", "https://x.com"],
                 },
                 {
                     "transformation_type": "merge",
-                    "recommended_action": "Merge A and B",
+                    "recommended_action": "You should merge A and B",
                     "urls": ["https://a.com", "https://b.com"],
                 },
             ]
         }
         plan = build_execution_plan(summary_data)
         focuses = [s["focus"] for s in plan]
+        self.assertTrue(all(s.get("intent") for s in plan))
         self.assertIn("Consolidate duplicate pages", focuses)
         self.assertIn("Normalize technical duplicates", focuses)
         self.assertLess(focuses.index("Consolidate duplicate pages"), focuses.index("Normalize technical duplicates"))
@@ -123,16 +137,6 @@ class TestExecutiveValidation(unittest.TestCase):
             )
 
     def test_llm_polish_consistency_mock(self):
-        class MockLLM:
-            def generate(self, prompt: str) -> str:
-                return (
-                    "Opening stays business-focused.\n\n"
-                    "Top issues\n"
-                    "1. [merge] These pages compete for the same purpose.\n"
-                    "   Consequence: Search visibility splits.\n"
-                    "   Action: Merge content into one page.\n"
-                )
-
         p = {
             "site_health_score": 70,
             "metrics": {},
@@ -143,9 +147,16 @@ class TestExecutiveValidation(unittest.TestCase):
         }
         data = build_executive_summary_data(p, {"problem_type": "acceptable"})
         validate_executive_alignment(data)
+        echo = f"{render_ceo_summary(data)}\n---\n{render_executive_summary(data)}"
+
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                return echo
+
         polished = render_executive_summary_llm(data, MockLLM())
         self.assertTrue(polished)
-        validate_executive_output(polished, data)
+        _, op = split_ceo_and_operational(polished)
+        validate_executive_output(polished, data, operational_brief=op)
 
 
 if __name__ == "__main__":

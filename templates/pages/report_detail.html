@@ -6,67 +6,180 @@
 {% block main %}
 {{ page_header("Audit report", report.domains) }}
 
-{# Section 1 — Executive (default) #}
-<section class="section-block">
-  <h2 class="section-block__title">Executive summary</h2>
-  <div class="metrics-row" style="margin-bottom: 20px;">
+<section class="section-block report-page-section">
+  {% if es and es.primary_bet %}
+  <h2 class="report-section-title report-section-title--primary">Primary decision</h2>
+  <div class="report-one-thing" role="region" aria-label="Primary recommendation">
+    <p class="report-one-thing__eyebrow">If you do one thing</p>
+    <p class="report-one-thing__subline">This is the highest impact change based on your site structure.</p>
+    <p class="report-one-thing__action">{{ es.primary_bet.action }}</p>
+    <div class="report-one-thing__body">
+      <p class="report-one-thing__label">Why this first</p>
+      <p class="report-one-thing__why">{{ es.primary_bet.why_this_over_others }}</p>
+      <p class="report-one-thing__label">Expected outcome</p>
+      <p class="report-one-thing__outcome">{{ es.primary_bet.expected_effect }}</p>
+    </div>
+  </div>
+  {% endif %}
+
+  <h2 class="section-block__title report-section-spaced">Decision brief</h2>
+  <div class="metrics-row report-metrics-tight">
     <span class="metric-pill"><span class="metric-pill__label">Health score</span><span class="metric-pill__value">{{ report.score }}</span></span>
     {{ priority_badge(report.priority_level or 'medium') }}
     {% if es and es.site_health %}
     <span class="metric-pill"><span class="metric-pill__label">Focus</span><span class="metric-pill__value">{{ es.site_health.primary_issue_type | title }}</span></span>
     {% endif %}
+    {% if es and es.impact_estimate %}
+    <span class="metric-pill"><span class="metric-pill__label">Impact (heuristic)</span><span class="metric-pill__value">{{ es.impact_estimate.impact_level }} · {{ es.impact_estimate.confidence }}</span></span>
+    {% endif %}
   </div>
-
-  {% if exec_text %}
-  <div class="card" style="white-space: pre-wrap; font-size: 0.98rem; line-height: 1.55;">{{ exec_text }}</div>
+  {% if es and es.impact_estimate and es.impact_estimate.reasoning %}
+  <p class="card__muted report-narrow-muted">{{ es.impact_estimate.reasoning }}</p>
   {% endif %}
 
-  {% if es and es.top_issues %}
-  <h3 style="margin: 28px 0 14px 0; font-size: 1.05rem;">Top issues</h3>
-  <div style="display: flex; flex-direction: column; gap: 16px;">
-    {% for issue in es.top_issues %}
-    <article class="card">
-      <div class="card__meta">
-        {{ transformation_badge(issue.transformation_type) }}
-        {{ priority_badge(issue.priority_level or 'medium') }}
-        <span class="metric-pill"><span class="metric-pill__label">Priority score</span><span class="metric-pill__value">{{ '%.0f'|format(issue.priority_score or 0) }}</span></span>
+  <div class="decision-brief">
+    {% if es and es.ceo_summary and es.ceo_summary.paragraphs %}
+    <section class="decision-brief__section" aria-labelledby="ceo-summary-heading">
+      <h3 id="ceo-summary-heading" class="decision-brief__h">CEO summary</h3>
+      <div class="decision-brief__narrow">
+        {% for para in es.ceo_summary.paragraphs %}
+        <p class="decision-brief__para">{{ para }}</p>
+        {% endfor %}
       </div>
-      <p class="card__title">{{ issue.problem }}</p>
-      <p class="card__muted"><strong>Why it matters:</strong> {{ issue.business_impact }}</p>
-      <p class="card__text"><strong>Recommended action:</strong> {{ issue.recommended_action }}</p>
-      {% if issue.urls %}
-      <p class="card__muted" style="font-size: 0.85rem;">{% for u in issue.urls[:5] %}{{ u }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
-      {% endif %}
-    </article>
-    {% endfor %}
-  </div>
-  {% endif %}
-</section>
+    </section>
+    {% elif exec_text %}
+    <p class="decision-brief__legacy card__muted">This snapshot predates the structured brief. Re-run the audit to populate skimmable sections, or use the technical audit for full detail.</p>
+    {% endif %}
 
-{# Section 2 — Action plan #}
-{% if es and es.execution_plan %}
-<section class="section-block">
-  <h2 class="section-block__title">Action plan</h2>
-  {% for step in es.execution_plan %}
-  <details class="action-step" {% if loop.first %}open{% endif %}>
-    <summary>Step {{ step.step }} — {{ step.focus }}</summary>
-    <div class="action-step__body">
-      <ul style="margin: 0; padding-left: 1.2rem;">
-        {% for a in step.actions %}
-        <li style="margin-bottom: 8px;">{{ a }}</li>
+    {% if es and es.top_issues %}
+    <section class="decision-brief__section" aria-labelledby="breaking-heading">
+      <h3 id="breaking-heading" class="decision-brief__h">What's breaking performance</h3>
+      <div class="decision-brief__issues">
+        {% for issue in es.top_issues %}
+        <article class="decision-brief-issue-card">
+          <div class="decision-brief-issue-card__meta">
+            {{ transformation_badge(issue.transformation_type) }}
+            {{ priority_badge(issue.priority_level or 'medium') }}
+          </div>
+          <div class="decision-brief-issue-card__slot">
+            <span class="decision-brief-issue-card__label">Problem</span>
+            <p class="decision-brief-issue-card__title">{{ issue.problem or issue.why }}</p>
+          </div>
+          <div class="decision-brief-issue-card__slot">
+            <span class="decision-brief-issue-card__label">Impact</span>
+            <p class="decision-brief-issue-card__lines">{{ issue.impact or issue.business_consequence }}</p>
+          </div>
+          <div class="decision-brief-issue-card__slot">
+            <span class="decision-brief-issue-card__label">Decision</span>
+            <p class="decision-brief-issue-card__action">{{ issue.decision or issue.recommended_action }}</p>
+          </div>
+          <div class="decision-brief-issue-card__slot">
+            <span class="decision-brief-issue-card__label">If ignored</span>
+            <p class="decision-brief-issue-card__line">{{ issue.risk or issue.risk_if_ignored }}</p>
+          </div>
+          <div class="decision-brief-issue-card__slot">
+            <span class="decision-brief-issue-card__label">Outcome</span>
+            <p class="decision-brief-issue-card__line">{{ issue.outcome }}</p>
+          </div>
+          {% if issue.urls %}
+          <p class="decision-brief-issue-card__urls">{% for u in issue.urls[:5] %}{{ u }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if es and es.execution_plan %}
+    <section class="decision-brief__section" aria-labelledby="exec-plan-heading">
+      <h3 id="exec-plan-heading" class="decision-brief__h">Execution plan</h3>
+      <div class="decision-brief__narrow">
+        {% for step in es.execution_plan %}
+        <div class="decision-brief-step">
+          <p class="decision-brief-step__lead"><span class="decision-brief-step__n">Step {{ step.step }}</span> {{ step.intent or step.focus }}</p>
+          {% if step.actions %}
+          <ul class="decision-brief-step__bullets">
+            {% for a in step.actions %}
+            <li>{{ a }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if es and es.opportunities %}
+    <section class="decision-brief__section" aria-labelledby="grow-heading">
+      <h3 id="grow-heading" class="decision-brief__h">Where you can grow</h3>
+      <div class="decision-brief__issues">
+        {% for opp in es.opportunities %}
+        <article class="decision-brief-opp-card">
+          <p class="decision-brief-opp-card__meta"><span class="decision-brief-opp-card__type">{{ opp.type | replace('_', ' ') }}</span>{% if opp.confidence %} · {{ opp.confidence }} confidence{% endif %}</p>
+          <h4 class="decision-brief-opp-card__title">{{ opp.title }}</h4>
+          <div class="decision-brief-opp-card__slot">
+            <span class="decision-brief-issue-card__label">Opportunity</span>
+            <p class="decision-brief-opp-card__line">{{ opp.opportunity }}</p>
+          </div>
+          <div class="decision-brief-opp-card__slot">
+            <span class="decision-brief-issue-card__label">Impact</span>
+            <p class="decision-brief-opp-card__line">{{ opp.impact }}</p>
+          </div>
+          <div class="decision-brief-opp-card__slot">
+            <span class="decision-brief-issue-card__label">Action</span>
+            <p class="decision-brief-opp-card__line">{{ opp.action }}</p>
+          </div>
+          {% if opp.pages %}
+          <p class="decision-brief-issue-card__urls">{% for u in opp.pages[:8] %}{{ u }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if es and es.quick_wins %}
+    <section class="decision-brief__section" aria-labelledby="quick-heading">
+      <h3 id="quick-heading" class="decision-brief__h">Quick fixes</h3>
+      <ul class="decision-brief__bullets decision-brief__narrow">
+        {% for q in es.quick_wins %}
+        <li>{{ q.action }}</li>
         {% endfor %}
       </ul>
-      {% if step.expected_outcome %}
-      <p class="card__muted" style="margin-top: 12px;"><strong>Expected outcome:</strong> {{ step.expected_outcome }}</p>
-      {% endif %}
-    </div>
-  </details>
-  {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if es and es.strategic_risks %}
+    <section class="decision-brief__section" aria-labelledby="delay-heading">
+      <h3 id="delay-heading" class="decision-brief__h">If you delay</h3>
+      <ul class="decision-brief__bullets decision-brief__narrow">
+        {% for r in es.strategic_risks %}
+        <li><strong>{{ r.risk }}:</strong> {{ r.consequence }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if es and es.expected_outcome and es.expected_outcome.bullets %}
+    <section class="decision-brief__section decision-brief__section--outcome" aria-labelledby="expected-heading">
+      <h3 id="expected-heading" class="decision-brief__h">Expected outcome</h3>
+      <ul class="decision-brief__outcome-list decision-brief__narrow">
+        {% for line in es.expected_outcome.bullets %}
+        <li>{{ line }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </div>
+
+  <p class="report-technical-cta-wrap">
+    <a href="/reports/{{ report.id }}/technical" class="btn-report-technical">View full technical audit</a>
+  </p>
 </section>
-{% endif %}
 
 {% if roadmap and roadmap.roadmap %}
-<section class="section-block">
+<section class="section-block report-page-section">
   <h2 class="section-block__title">Roadmap steps</h2>
   {% for item in roadmap.roadmap %}
   <details class="action-step">
@@ -82,13 +195,5 @@
 </section>
 {% endif %}
 
-{# Section 3 — Technical (collapsed) #}
-<details class="tech-details">
-  <summary>Technical details</summary>
-  <div class="tech-details__body audit-report">
-    {{ report_html | safe }}
-  </div>
-</details>
-
-<p style="margin-top: 32px;"><a href="/reports">← All reports</a></p>
+<p class="report-back-link"><a href="/reports">← All reports</a></p>
 {% endblock %}
