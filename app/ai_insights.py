@@ -4,6 +4,11 @@ import re
 
 from openai import OpenAI
 
+from app.ai_validator import (
+    contains_banned,
+    validate_ai_output_strict,
+    validate_problem_action_alignment,
+)
 from app.analyzer import REMEDIATION_DECISION_TYPES
 from app.business_context import (
     default_allowed_actions,
@@ -256,86 +261,218 @@ class LLMClient:
         return json.loads(text)
 
 
-def generate_ai_insights(payload, llm_client):
+def _first_url_for_insights(payload: dict) -> str:
+    for u in payload.get("page_urls") or []:
+        if u:
+            return str(u)
+    for c in payload.get("clusters") or []:
+        if isinstance(c, dict) and c.get("dominant_url"):
+            return str(c["dominant_url"])
+    return "https://127.0.0.1/"
+
+
+def _validate_pass1_output(out: dict, problem_type: str) -> None:
+    if not isinstance(out, dict):
+        raise ValueError("Pass 1 must return a JSON object")
+    cp = (out.get("core_problem") or "").strip()
+    pa = (out.get("primary_action") or "").strip()
+    if not cp or not pa:
+        raise ValueError("Pass 1 missing core_problem or primary_action")
+    if len(cp.split()) > 25:
+        raise ValueError("Pass 1 core_problem exceeds 25 words")
+    if len(pa.split()) > 20:
+        raise ValueError("Pass 1 primary_action exceeds 20 words")
+    if contains_banned(cp) or contains_banned(pa):
+        raise ValueError("Pass 1 contains banned vocabulary")
+    probe = {
+        "problem_type": problem_type,
+        "core_problem": cp,
+        "primary_action": pa,
+    }
+    validate_problem_action_alignment(probe)
+
+
+def _validate_pass2_output(out: dict, pass1: dict) -> None:
+    if not isinstance(out, dict):
+        raise ValueError("Pass 2 must return a JSON object")
+    why = (out.get("why_it_matters") or "").strip()
+    ex = (out.get("execution_example") or "").strip()
+    if not why or not ex:
+        raise ValueError("Pass 2 missing why_it_matters or execution_example")
+    if len(why.split()) > 40:
+        raise ValueError("Pass 2 why_it_matters exceeds 40 words")
+    if contains_banned(why) or contains_banned(ex):
+        raise ValueError("Pass 2 contains banned vocabulary")
+    if not URL_RE.search(ex):
+        raise ValueError("Pass 2 execution_example must cite a real https URL")
+    if len(ex) < 16:
+        raise ValueError("Pass 2 execution_example too short")
+
+
+def _ensure_primary_action_url_and_verb(
+    payload: dict, primary_action: str, problem_type: str
+) -> str:
+    s = (primary_action or "").strip()
+    anchor = _first_url_for_insights(payload)
+    if not s:
+        if problem_type == "acceptable":
+            s = f"Prescribe none for structural consolidation on {anchor}."
+        else:
+            s = f"Consolidate duplicate signals on {anchor}."
+    if not URL_RE.search(s):
+        s = f"{s} Target {anchor}."
+    if not ACTION_VERBS_RE.search(s):
+        if problem_type == "acceptable":
+            s = f"Prescribe none for merge or redirect on {anchor}."
+        else:
+            s = f"Redirect duplicate paths to {anchor}; {s}"
+    return s.strip()
+
+
+def _synthetic_verdict(anchor: str, problem_type: str) -> str:
+    return (
+        f"{problem_type.title()} finding anchored at {anchor}; "
+        f"cluster overlap drives the stated primary action."
+    )
+
+
+def _generate_insights_pass1(
+    payload: dict, llm_client: LLMClient, problem_type: str, max_attempts: int = 3
+) -> dict:
     data = json.dumps(payload, indent=2, default=str)
+    prompt = f"""You are generating structured analysis.
+
+Return JSON only.
+
+Fields:
+- core_problem (max 25 words)
+- primary_action (max 20 words)
+
+Rules:
+- No adjectives
+- No explanations
+- No fluff
+- Must align with problem_type: {problem_type}
+
+Examples:
+
+strategic →
+core_problem: Regional pages target the same decision intent with identical messaging
+primary_action: Differentiate messaging and proof between regional pages
+
+technical →
+core_problem: Duplicate URL variants split crawl signals
+primary_action: Canonicalize and redirect duplicate URLs
+
+acceptable →
+core_problem: Crawl overlap stays within acceptable bounds for current URL set
+primary_action: Prescribe none for merge redirect or consolidate on sampled URLs
+
+{CONSTRAINT_PROMPT}
+
+Context (clusters, metrics, URLs):
+{data}
+
+Output shape (only these keys):
+{{
+  "core_problem": "",
+  "primary_action": ""
+}}
+"""
+    for attempt in range(max_attempts):
+        out = llm_client.generate_json(prompt)
+        try:
+            _validate_pass1_output(out, problem_type)
+        except Exception as e:
+            print(f"[PASS 1 VALIDATION FAILED] Attempt {attempt + 1}: {e}")
+            continue
+        return out
+    raise ValueError("AI pass 1 failed validation — inspect prompt/output")
+
+
+def _generate_insights_pass2(
+    payload: dict,
+    llm_client: LLMClient,
+    pass1: dict,
+    max_attempts: int = 3,
+) -> dict:
+    core_problem = (pass1.get("core_problem") or "").strip()
+    primary_action = (pass1.get("primary_action") or "").strip()
     prompt = f"""{_SHARED_RULES}
 {CONSTRAINT_PROMPT}
 
-You are a senior digital strategy consultant. Return JSON only (no markdown).
+You are expanding a frozen pass-1 summary into supporting fields. Return JSON only.
 
-The verdict MUST:
-- include at least one real https URL from the payload OR name a cluster by listing its dominant_url
-- state the decision/stance only—do not re-explain root cause (that belongs in core_problem after merge)
-- NOT use the words: significant, various, multiple
-- If payload clusters show duplication_class competitive OR decision_type differentiate/review, problem_type MUST be strategic and the verdict MUST NOT claim that technical URL duplication alone dominates the issue.
+Expand the following into structured output.
 
-primary_issue MUST:
-- be exactly one sentence: the single canonical issue for this audit (no bullet points)
+Input:
+core_problem: {core_problem}
+primary_action: {primary_action}
 
-core_problem MUST:
-- explain WHY that issue exists (mechanism: embeddings, overlap, which URLs)—without repeating the verdict sentence or copying primary_issue verbatim
+Return JSON:
+- why_it_matters (max 40 words)
+- execution_example (specific, URL-based; must include at least one https URL from the payload)
 
-why_it_matters MUST:
-- state business stakes only (revenue, trust, conversion clarity)—not a repeat of core_problem or primary_action.
+Rules:
+- No vague language (no: clarify, improve, optimize, enhance, refine, align, leverage, utilize)
+- Must stay consistent with the input; do not introduce new problems or new actions
+- Do not contradict core_problem or primary_action
 
-primary_action MUST:
-- one decisive strategic move using verbs from: merge, delete, consolidate, redirect, split, rewrite, differentiate, reposition (respect business_context.allowed_actions and protected/core_product rules)
-- cite at least one real https URL from the payload
+Payload URLs (use at least one in execution_example):
+{json.dumps(payload.get("page_urls") or [], indent=2)}
 
-execution_example MUST:
-- one concrete example of what to change (role + surface + URL pattern), not a second recommendation.
-
-The recommendation field (legacy mirror) MUST equal primary_action verbatim.
-
-The business_impact field (legacy mirror) MUST equal why_it_matters verbatim.
-
-Each metrics_explained row MUST give value + implication in plain business terms. For similarity, describe pages as indistinguishable in purpose and competing for the same user decision—not "high similarity score" boilerplate.
-
-supporting_evidence[].issue MUST describe observable overlap in copy, intent, or product decision in plain language; you may cite a metric as backup but do not lead with "cluster similarity 0.896" style jargon alone.
-
-The "clusters" array in this payload contains ONLY remediation clusters (distinct canonical resources: decision_type differentiate or review; legacy strategic may appear). Clusters include page_type, intent, decision_stage, duplication_class—use them. Ignore/technical URL-alias/none/acceptable clusters are excluded.
-
-Duplication is not automatically bad. Classify the audit-level problem using payload clusters and business_context:
-- acceptable: overlap is appropriate; little or no remediation
-- competitive: pages fight for the same user decision; differentiation or repositioning
-- technical: URL/canonical/slash/host duplication dominates
-- strategic: structure or governance change beyond page-level copy
-
-DATA:
-{data}
-
-Return JSON with EXACTLY these keys:
+Output shape (only these keys):
 {{
-  "verdict": "",
-  "primary_issue": "",
-  "core_problem": "",
   "why_it_matters": "",
-  "primary_action": "",
-  "execution_example": "",
-  "recommendation": "",
-  "business_impact": "",
-  "inaction_risk": "",
-  "problem_type": "",
-  "metrics_explained": [
-    {{ "metric": "", "value": "", "implication": "" }}
-  ],
-  "primary_clusters": [],
-  "supporting_evidence": [
-    {{
-      "urls": [],
-      "issue": "",
-      "metric_refs": []
-    }}
-  ]
+  "execution_example": ""
 }}
-
-primary_issue: one sentence; this becomes the single headline issue (merged into core_problem downstream).
-recommendation and business_impact: must duplicate primary_action and why_it_matters exactly (same strings).
-problem_type: exactly one of: acceptable | competitive | technical | strategic. If any cluster has duplication_class competitive OR decision_type differentiate or review, problem_type MUST be strategic—never strategic + a verdict that says technical duplication dominates the crawl.
-primary_clusters: short structural labels (dominant_url + similarity)—inventory only, not a second narrative.
-supporting_evidence: at least 2 items; issue text states what overlaps in the real page experience (copy, offer, decision), not raw embedding scores alone.
 """
-    return llm_client.generate_json(prompt)
+    for attempt in range(max_attempts):
+        out = llm_client.generate_json(prompt)
+        try:
+            _validate_pass2_output(out, pass1)
+        except Exception as e:
+            print(f"[PASS 2 VALIDATION FAILED] Attempt {attempt + 1}: {e}")
+            continue
+        return out
+    raise ValueError("AI pass 2 failed validation — inspect prompt/output")
+
+
+def generate_ai_insights(payload, llm_client):
+    dominant = (payload.get("dominant_problem_type") or "acceptable").strip().lower()
+    pass1 = _generate_insights_pass1(payload, llm_client, dominant)
+    pass2 = _generate_insights_pass2(payload, llm_client, pass1)
+
+    final_output = {
+        **pass1,
+        **pass2,
+        "problem_type": dominant,
+        "confidence": "High",
+        "impact": "Moderate",
+    }
+    final_output["primary_action"] = _ensure_primary_action_url_and_verb(
+        payload, final_output["primary_action"], dominant
+    )
+    final_output["impact_level"] = "Moderate"
+
+    anchor = _first_url_for_insights(payload)
+    fb = build_fallback_insights(payload)
+    final_output["verdict"] = _synthetic_verdict(anchor, dominant)
+    final_output["primary_issue"] = final_output["core_problem"]
+    final_output["recommendation"] = final_output["primary_action"]
+    final_output["business_impact"] = final_output["why_it_matters"]
+    final_output["inaction_risk"] = (
+        "Leaving duplicate signals in place splits paths and weakens focus on one indexable answer per intent."
+    )
+    final_output["metrics_explained"] = fb["metrics_explained"]
+    final_output["primary_clusters"] = fb["primary_clusters"]
+    final_output["supporting_evidence"] = fb["supporting_evidence"]
+
+    validate_ai_output_strict(final_output, dominant)
+    if not validate_ai_output(final_output):
+        raise ValueError("AI two-pass merge failed full-shape validation — inspect output")
+
+    return final_output
 
 
 def generate_execution_roadmap(payload, llm_client):
@@ -410,7 +547,7 @@ Return JSON:
   ]
 }}
 """
-    return llm_client.generate_json(prompt)
+    return generate_roadmap_with_retry(prompt, llm_client, payload)
 
 
 def _text_clean_for_banned(s: str) -> bool:
@@ -524,6 +661,22 @@ def validate_ai_output(ai_output) -> bool:
         if not isinstance(mrefs, list):
             return False
     return True
+
+
+def generate_roadmap_with_retry(
+    prompt: str,
+    llm_client: LLMClient,
+    payload: dict,
+    max_attempts: int = 3,
+) -> dict:
+    """Retry roadmap generation when structural validation fails."""
+    bc = payload.get("business_context")
+    for attempt in range(max_attempts):
+        output = llm_client.generate_json(prompt)
+        if validate_roadmap_output(output, bc):
+            return output
+        print(f"[ROADMAP VALIDATION FAILED] Attempt {attempt + 1}")
+    return build_fallback_roadmap(payload)
 
 
 def _page_changes_ok_for_step(item: dict, action_type: str) -> bool:
@@ -702,17 +855,20 @@ def payload_requires_strategic_problem_type(payload: dict) -> bool:
 
 def reconcile_problem_type_and_verdict(insights: dict, payload: dict) -> dict:
     """
-    Align problem_type and verdict with cluster signals: never strategic assessment +
-    'technical duplication dominates' messaging when remediation clusters exist.
+    Lock problem_type to server-derived dominant_problem_type when present; adjust verdict
+    when strategic clusters conflict with technical-only wording.
     """
     out = dict(insights)
+    dominant = payload.get("dominant_problem_type")
+    if dominant:
+        out["problem_type"] = str(dominant).strip().lower()
+
     needs_strategic = payload_requires_strategic_problem_type(payload)
     v = (out.get("verdict") or "").strip()
     vl = v.lower()
     bad_tech = "technical duplication dominates" in vl
 
     if needs_strategic:
-        out["problem_type"] = "strategic"
         if bad_tech or "no strategic content conflicts detected after normalization" in vl:
             anchor = ""
             for c in _strategic_cluster_rows(payload):
@@ -726,7 +882,11 @@ def reconcile_problem_type_and_verdict(insights: dict, payload: dict) -> dict:
                 f"Overlapping pages around {anchor} need distinct positioning; "
                 f"resolve copy and intent first—canonical fixes alone will not fix that competition."
             )
-    elif not _strategic_cluster_rows(payload) and (payload.get("technical_fix_urls") or []):
+    elif (
+        not dominant
+        and not _strategic_cluster_rows(payload)
+        and (payload.get("technical_fix_urls") or [])
+    ):
         out["problem_type"] = "technical"
     return out
 

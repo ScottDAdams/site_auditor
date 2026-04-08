@@ -107,6 +107,15 @@ def _set_phase(msg: str) -> None:
     STATE["phase"] = msg
 
 
+def derive_problem_type(clusters: list) -> str:
+    """Deterministic audit-level problem type from cluster duplication_class (before AI)."""
+    if any((c or {}).get("duplication_class") == "competitive" for c in clusters):
+        return "strategic"
+    if any((c or {}).get("duplication_class") == "technical" for c in clusters):
+        return "technical"
+    return "acceptable"
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return FileResponse(
@@ -275,6 +284,7 @@ def _run_audit_job(site_list: list[str]) -> None:
             "clusters": cluster_rows,
             "strategic_clusters": strategic_rows,
             "technical_fix_urls": technical_fix_urls,
+            "dominant_problem_type": derive_problem_type(clusters),
         }
 
         payload_for_ai = {
