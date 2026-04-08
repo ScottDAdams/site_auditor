@@ -17,6 +17,7 @@ from app.ai_validator import (
     validate_why_it_matters_stake,
 )
 from app.analyzer import REMEDIATION_DECISION_TYPES
+from app.transformation_spec import build_transformation_spec, render_insights_from_spec
 from app.business_context import (
     default_allowed_actions,
     effective_allowed_actions,
@@ -659,12 +660,20 @@ Output JSON keys exactly:
 
 def generate_ai_insights(payload, llm_client):
     dominant = (payload.get("dominant_problem_type") or "acceptable").strip().lower()
-    pass1 = _generate_insights_pass1(payload, llm_client, dominant)
-    pass2 = _generate_insights_pass2(payload, llm_client, pass1)
+    spec = payload.get("transformation_spec")
+    if spec is None:
+        spec = build_transformation_spec(payload)
 
+    rendered = render_insights_from_spec(payload, dominant, spec)
     final_output = {
-        **pass1,
-        **pass2,
+        "core_problem": rendered["core_problem"],
+        "page_a_role": rendered["page_a_role"],
+        "page_b_role": rendered["page_b_role"],
+        "primary_action": rendered["primary_action"],
+        "why_it_matters": rendered["why_it_matters"],
+        "execution_example": rendered["execution_example"],
+        "transformation_spec": rendered["transformation_spec"],
+        "insights_rendered_from_spec": True,
         "problem_type": dominant,
         "confidence": "High",
         "impact": "Moderate",

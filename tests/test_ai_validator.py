@@ -10,6 +10,8 @@ from app.ai_validator import (
     validate_primary_action_hard_constraints,
     validate_why_it_matters_stake,
 )
+from app.transformation_spec import build_transformation_spec, render_insights_from_spec
+from app.ai_insights import _conflict_context_for_payload
 
 
 def _minimal_valid() -> dict:
@@ -169,6 +171,42 @@ class TestStrictValidator(unittest.TestCase):
             "candidate_urls": [u1, u2],
         }
         self.assertTrue(validate_ai_output_strict(d, "strategic", ctx))
+
+    def test_transformation_spec_render_passes_strict(self):
+        u1 = "https://www.scti.co.nz/our-policies/comprehensive"
+        u2 = "https://www.scti.com.au/our-policies/comprehensive"
+        payload = {
+            "dominant_problem_type": "strategic",
+            "business_context": {"market_context": {"separate_regions": True}},
+            "metrics": {"overlap_rate": 0.4, "avg_cluster_similarity": 0.88},
+            "clusters": [
+                {
+                    "decision_type": "differentiate",
+                    "duplication_class": "competitive",
+                    "similarity": 0.9,
+                    "dominant_url": u1,
+                    "competing_urls": [u2],
+                    "page_type": "policy",
+                    "intent": "coverage",
+                    "decision_stage": "evaluate",
+                }
+            ],
+            "page_urls": [u1, u2],
+        }
+        spec = build_transformation_spec(payload)
+        self.assertEqual(spec.get("cluster_relationship"), "cross_market")
+        rendered = render_insights_from_spec(payload, "strategic", spec)
+        d = {
+            **rendered,
+            "problem_type": "strategic",
+            "confidence": "High",
+            "impact": "Moderate",
+            "structured_pass1": True,
+        }
+        ctx = _conflict_context_for_payload(payload)
+        self.assertTrue(validate_ai_output_strict(d, "strategic", ctx))
+        self.assertIn("Australian pricing", d["primary_action"])
+        self.assertIn("remove:", d["execution_example"].lower())
 
 
 if __name__ == "__main__":

@@ -377,6 +377,86 @@ def validate_confidence_impact(data: dict) -> None:
         raise ValueError("impact must be High, Moderate, or Low")
 
 
+def validate_narrative_matches_transformation_spec(data: dict) -> None:
+    """
+    When the pipeline rendered insights from transformation_spec, roles and execution
+    bullets must match the spec exactly (no model drift).
+    """
+    if not data.get("insights_rendered_from_spec"):
+        return
+    spec = data.get("transformation_spec")
+    if not isinstance(spec, dict):
+        raise ValueError(
+            "[rule:spec_missing] insights_rendered_from_spec requires transformation_spec object"
+        )
+    if (data.get("page_a_role") or "").strip() != (spec.get("page_a_role") or "").strip():
+        raise ValueError("[rule:spec_page_a_role] page_a_role must match transformation_spec")
+    if (data.get("page_b_role") or "").strip() != (spec.get("page_b_role") or "").strip():
+        raise ValueError("[rule:spec_page_b_role] page_b_role must match transformation_spec")
+
+    ex = (data.get("execution_example") or "").strip()
+    ua = (spec.get("page_a_url") or "").strip()
+    ub = (spec.get("page_b_url") or "").strip()
+    if ua and ua not in ex:
+        raise ValueError("[rule:spec_execution_url_a] execution_example must cite page_a_url")
+    if ub and ub not in ex:
+        raise ValueError("[rule:spec_execution_url_b] execution_example must cite page_b_url")
+
+    def _parse_blocks(text: str) -> list[tuple[str, str, str]]:
+        """Return list of (url, remove_text, add_text) from On URL: blocks."""
+        blocks = re.split(r"\n\s*\n+", text.strip())
+        out: list[tuple[str, str, str]] = []
+        for blk in blocks:
+            if not blk.strip():
+                continue
+            lines = [ln.strip() for ln in blk.splitlines() if ln.strip()]
+            if not lines:
+                continue
+            head = lines[0]
+            um = re.match(r"^On\s+(https?://\S+)\s*:\s*$", head, re.I)
+            if not um:
+                continue
+            url = um.group(1)
+            rm_txt, ad_txt = "", ""
+            for ln in lines[1:]:
+                rmm = re.match(r"^-\s*remove\s*:\s*(.+)$", ln, re.I)
+                if rmm:
+                    rm_txt = rmm.group(1).strip()
+                    continue
+                adm = re.match(r"^-\s*add\s*:\s*(.+)$", ln, re.I)
+                if adm:
+                    ad_txt = adm.group(1).strip()
+            out.append((url, rm_txt, ad_txt))
+        return out
+
+    parsed = _parse_blocks(ex)
+    ra_list = list(spec.get("remove_from_a") or [])
+    aa_list = list(spec.get("add_to_a") or [])
+    rb_list = list(spec.get("remove_from_b") or [])
+    ab_list = list(spec.get("add_to_b") or [])
+
+    if ua:
+        exp_rm_a = ra_list[0] if ra_list else "overlapping shared messaging"
+        exp_ad_a = aa_list[0] if aa_list else "content matched to this URL role"
+        match_a = next((p for p in parsed if p[0] == ua), None)
+        if not match_a:
+            raise ValueError("[rule:spec_execution_block_a] missing On block for page_a_url")
+        if match_a[1] != exp_rm_a or match_a[2] != exp_ad_a:
+            raise ValueError(
+                "[rule:spec_execution_lines_a] remove/add lines must match transformation_spec"
+            )
+    if ub:
+        exp_rm_b = rb_list[0] if rb_list else "overlapping shared messaging"
+        exp_ad_b = ab_list[0] if ab_list else "content matched to this URL role"
+        match_b = next((p for p in parsed if p[0] == ub), None)
+        if not match_b:
+            raise ValueError("[rule:spec_execution_block_b] missing On block for page_b_url")
+        if match_b[1] != exp_rm_b or match_b[2] != exp_ad_b:
+            raise ValueError(
+                "[rule:spec_execution_lines_b] remove/add lines must match transformation_spec"
+            )
+
+
 def validate_ai_output_strict(
     data,
     dominant_problem_type: str | None = None,
@@ -413,5 +493,7 @@ def validate_ai_output_strict(
             str(data.get("execution_example") or ""),
             list(conflict_context.get("candidate_urls") or []),
         )
+
+    validate_narrative_matches_transformation_spec(data)
 
     return True

@@ -46,6 +46,7 @@ from app.ai_insights import (
     validate_roadmap_output,
 )
 from app.business_context import build_business_context
+from app.transformation_spec import build_transformation_spec
 from app.report import generate_report
 from app.utils import canonicalize_url
 from app.db.session import init_db
@@ -286,6 +287,9 @@ def _run_audit_job(site_list: list[str]) -> None:
             "technical_fix_urls": technical_fix_urls,
             "dominant_problem_type": derive_problem_type(clusters),
         }
+        analysis_payload["transformation_spec"] = build_transformation_spec(
+            analysis_payload
+        )
 
         payload_for_ai = {
             **{k: v for k, v in analysis_payload.items() if k != "strategic_clusters"},
