@@ -78,14 +78,18 @@ def render_executive_summary(insight: dict) -> str:
     """Top-of-report narrative: what, why, action, optional example, and meta (HTML-escaped)."""
     esc = escape
     cp = (insight.get("core_problem") or "").strip()
-    bi = (
-        (insight.get("why_it_matters") or insight.get("business_impact") or "")
-        .strip()
-    )
-    rec = (
-        (insight.get("primary_action") or insight.get("recommendation") or "")
-        .strip()
-    )
+    if insight.get("validated_ai_narrative"):
+        bi = (insight.get("why_it_matters") or "").strip()
+        rec = (insight.get("primary_action") or "").strip()
+    else:
+        bi = (
+            (insight.get("why_it_matters") or insight.get("business_impact") or "")
+            .strip()
+        )
+        rec = (
+            (insight.get("primary_action") or insight.get("recommendation") or "")
+            .strip()
+        )
     ex = (insight.get("execution_example") or "").strip()
     conf = (insight.get("confidence") or "High").strip() or "High"
     imp = (insight.get("impact_level") or "High").strip() or "High"

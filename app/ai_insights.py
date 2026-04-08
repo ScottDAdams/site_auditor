@@ -6,8 +6,15 @@ from openai import OpenAI
 
 from app.ai_validator import (
     contains_banned,
+    validate_action_resolves_conflict,
     validate_ai_output_strict,
+    validate_execution_example_contrast,
+    validate_execution_example_url_binding,
+    validate_pass1_structured_roles,
+    validate_primary_action_hard_constraints,
+    validate_primary_action_reflects_roles,
     validate_problem_action_alignment,
+    validate_why_it_matters_stake,
 )
 from app.analyzer import REMEDIATION_DECISION_TYPES
 from app.business_context import (
@@ -126,7 +133,8 @@ VERDICT_FLUFF_RE = re.compile(
     re.I,
 )
 ACTION_VERBS_RE = re.compile(
-    r"\b(merge|delete|consolidate|redirect|split|rewrite|differentiate|reposition|none)\b",
+    r"\b(merge|delete|consolidate|redirect|split|rewrite|differentiate|reposition|none|"
+    r"remove|restrict|assign|strip|replace)\b",
     re.I,
 )
 URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
@@ -271,18 +279,163 @@ def _first_url_for_insights(payload: dict) -> str:
     return "https://127.0.0.1/"
 
 
-def _validate_pass1_output(out: dict, problem_type: str) -> None:
+def _collect_candidate_urls_for_binding(payload: dict) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in payload.get("page_urls") or []:
+        if u:
+            s = str(u).strip()
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+    for c in payload.get("clusters") or []:
+        if not isinstance(c, dict):
+            continue
+        du = c.get("dominant_url")
+        if du:
+            s = str(du).strip()
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+        for u in c.get("competing_urls") or []:
+            if u:
+                s = str(u).strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    out.append(s)
+        for p in c.get("pages") or []:
+            u = p if isinstance(p, str) else (p.get("url") if isinstance(p, dict) else None)
+            if u:
+                s = str(u).strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    out.append(s)
+    return out[:40]
+
+
+def build_ai_framing_context(payload: dict) -> dict:
+    """Deterministic context for prompts — AI must anchor here, not reinterpret."""
+    rows = [c for c in (payload.get("clusters") or []) if isinstance(c, dict)]
+    strategic = [r for r in rows if r.get("decision_type") in REMEDIATION_DECISION_TYPES]
+    dominant_pt = (payload.get("dominant_problem_type") or "acceptable").strip().lower()
+    first_dup = strategic[0].get("duplication_class") if strategic else None
+    first_dt = strategic[0].get("decision_type") if strategic else None
+
+    if dominant_pt == "strategic":
+        pk = f"strategic_{first_dup or 'remediation'}"
+    elif dominant_pt == "technical":
+        pk = "technical_duplication"
+    else:
+        pk = "acceptable_overlap"
+
+    bc = payload.get("business_context") or {}
+    mc = bc.get("market_context") or {}
+    sample_urls: list[str] = []
+    seen_u: set[str] = set()
+    for r in strategic[:4]:
+        if r.get("dominant_url"):
+            s = str(r["dominant_url"]).strip()
+            if s and s not in seen_u:
+                seen_u.add(s)
+                sample_urls.append(s)
+        for u in (r.get("competing_urls") or [])[:3]:
+            if u:
+                s = str(u).strip()
+                if s and s not in seen_u:
+                    seen_u.add(s)
+                    sample_urls.append(s)
+    page_a_url = sample_urls[0] if sample_urls else None
+    page_b_url = sample_urls[1] if len(sample_urls) > 1 else None
+    competing_pages_roles_required = bool(
+        dominant_pt == "strategic"
+        and page_a_url
+        and page_b_url
+        and page_a_url != page_b_url
+    )
+
+    rel = "unknown"
+    if len(sample_urls) >= 2 and mc.get("separate_regions") and is_cross_domain(
+        sample_urls[0], sample_urls[1]
+    ):
+        rel = "cross_market"
+    elif len(sample_urls) >= 2:
+        rel = "intra_market"
+    elif dominant_pt == "acceptable":
+        rel = "intra_market"
+
+    parts = []
+    for i, r in enumerate(strategic[:3], 1):
+        dom = r.get("dominant_url") or "?"
+        sim = r.get("similarity", "")
+        dc = r.get("duplication_class") or ""
+        dt = r.get("decision_type") or ""
+        parts.append(
+            f"cluster_{i}: decision_type={dt} duplication_class={dc} "
+            f"dominant_url={dom} similarity={sim}"
+        )
+    cluster_summary = "; ".join(parts) if parts else "no_remediation_clusters"
+
+    return {
+        "dominant_problem_type": dominant_pt,
+        "problem_type_key": pk,
+        "primary_decision_type": first_dt or "none",
+        "relationship": rel,
+        "cluster_summary": cluster_summary,
+        "competing_pages_roles_required": competing_pages_roles_required,
+        "page_a_url": page_a_url,
+        "page_b_url": page_b_url,
+    }
+
+
+def _conflict_context_for_payload(payload: dict) -> dict:
+    f = build_ai_framing_context(payload)
+    return {
+        "dominant_problem_type": f["dominant_problem_type"],
+        "competing_pages_roles_required": f["competing_pages_roles_required"],
+        "page_a_url": f.get("page_a_url"),
+        "page_b_url": f.get("page_b_url"),
+        "problem_type_key": f.get("problem_type_key"),
+        "candidate_urls": _collect_candidate_urls_for_binding(payload),
+    }
+
+
+def _pass1_retry_emphasis(attempt: int) -> str:
+    if attempt <= 0:
+        return ""
+    if attempt == 1:
+        return (
+            "\n\n[RETRY 2] Fill EVERY JSON field separately. primary_action = ONE sentence that states "
+            "the exact transformation from current overlap to page_a_role + page_b_role (use ';' or ' and ').\n"
+        )
+    return (
+        "\n\n[RETRY 3] Do not merge fields into one paragraph. page_a_role and page_b_role must each be "
+        "one sentence; primary_action must cite both URL targets when two competing URLs exist.\n"
+    )
+
+
+def _pass2_retry_emphasis(attempt: int) -> str:
+    if attempt <= 0:
+        return ""
+    if attempt == 1:
+        return (
+            "\n\n[RETRY 2] execution_example: use the On URL / - remove / - add template exactly; "
+            "two URL blocks when two candidates exist.\n"
+        )
+    return (
+        "\n\n[RETRY 3] why_it_matters: include ONE line only — either a metric name from payload.metrics "
+        "OR one consequence phrase (ranking conflict, conversion split, decision ambiguity).\n"
+    )
+
+
+def _validate_pass1_output(out: dict, problem_type: str, payload: dict) -> None:
     if not isinstance(out, dict):
         raise ValueError("Pass 1 must return a JSON object")
     cp = (out.get("core_problem") or "").strip()
+    ra = (out.get("page_a_role") or "").strip()
+    rb = (out.get("page_b_role") or "").strip()
     pa = (out.get("primary_action") or "").strip()
-    if not cp or not pa:
-        raise ValueError("Pass 1 missing core_problem or primary_action")
-    if len(cp.split()) > 25:
-        raise ValueError("Pass 1 core_problem exceeds 25 words")
-    if len(pa.split()) > 20:
-        raise ValueError("Pass 1 primary_action exceeds 20 words")
-    if contains_banned(cp) or contains_banned(pa):
+    validate_pass1_structured_roles(cp, ra, rb, pa)
+    if contains_banned(cp) or contains_banned(ra) or contains_banned(rb) or contains_banned(pa):
         raise ValueError("Pass 1 contains banned vocabulary")
     probe = {
         "problem_type": problem_type,
@@ -290,9 +443,13 @@ def _validate_pass1_output(out: dict, problem_type: str) -> None:
         "primary_action": pa,
     }
     validate_problem_action_alignment(probe)
+    validate_primary_action_hard_constraints(pa)
+    ctx = _conflict_context_for_payload(payload)
+    validate_action_resolves_conflict(pa, ctx)
+    validate_primary_action_reflects_roles(pa, ra, rb, ctx)
 
 
-def _validate_pass2_output(out: dict, pass1: dict) -> None:
+def _validate_pass2_output(out: dict, pass1: dict, payload: dict) -> None:
     if not isinstance(out, dict):
         raise ValueError("Pass 2 must return a JSON object")
     why = (out.get("why_it_matters") or "").strip()
@@ -304,9 +461,13 @@ def _validate_pass2_output(out: dict, pass1: dict) -> None:
     if contains_banned(why) or contains_banned(ex):
         raise ValueError("Pass 2 contains banned vocabulary")
     if not URL_RE.search(ex):
-        raise ValueError("Pass 2 execution_example must cite a real https URL")
-    if len(ex) < 16:
-        raise ValueError("Pass 2 execution_example too short")
+        raise ValueError("[rule:execution_https] Pass 2 execution_example must cite https URL(s)")
+    if len(ex) < 40:
+        raise ValueError("[rule:execution_length] Pass 2 execution_example too short")
+    candidates = _collect_candidate_urls_for_binding(payload)
+    validate_execution_example_url_binding(ex, candidates)
+    validate_execution_example_contrast(ex, candidates)
+    validate_why_it_matters_stake(why)
 
 
 def _ensure_primary_action_url_and_verb(
@@ -324,6 +485,11 @@ def _ensure_primary_action_url_and_verb(
     if not ACTION_VERBS_RE.search(s):
         if problem_type == "acceptable":
             s = f"Prescribe none for merge or redirect on {anchor}."
+        elif problem_type == "strategic":
+            s = (
+                f"Assign distinct buyer roles per URL starting at {anchor}; "
+                f"remove overlapping blocks so decision paths split."
+            )
         else:
             s = f"Redirect duplicate paths to {anchor}; {s}"
     return s.strip()
@@ -339,55 +505,78 @@ def _synthetic_verdict(anchor: str, problem_type: str) -> str:
 def _generate_insights_pass1(
     payload: dict, llm_client: LLMClient, problem_type: str, max_attempts: int = 3
 ) -> dict:
-    data = json.dumps(payload, indent=2, default=str)
-    prompt = f"""You are generating structured analysis.
+    framing = build_ai_framing_context(payload)
+    ctx = {**payload, "ai_framing": framing}
+    data = json.dumps(ctx, indent=2, default=str)
+    prompt = f"""You are a constrained renderer of system decisions. Return JSON only — no markdown.
 
-Return JSON only.
+SYSTEM TRUTH (fill fields from this only; do not invent a new diagnosis):
+{json.dumps(framing, indent=2)}
 
-Fields:
-- core_problem (max 25 words)
-- primary_action (max 20 words)
+Pass 1 is STRUCTURED FILL-IN. You MUST output exactly four string fields. Do NOT write paragraphs.
+Do NOT combine multiple fields into one string. One sentence per field unless noted.
 
-Rules:
-- No adjectives
-- No explanations
-- No fluff
-- Must align with problem_type: {problem_type}
+Fields (all REQUIRED):
+1) core_problem — One sentence: the conflict using dominant_problem_type + cluster_summary (competing URLs, overlapping intent, or duplicate routes).
 
-Examples:
+2) page_a_role — One sentence: what page_a_url (or primary sampled URL) should REPRESENT after the change (buyer job, region, product decision). If no second URL exists, state the canonical or single-page role.
 
-strategic →
-core_problem: Regional pages target the same decision intent with identical messaging
-primary_action: Differentiate messaging and proof between regional pages
+3) page_b_role — One sentence: what page_b_url (or alias / peer / second URL) should REPRESENT after the change. If only one URL exists, state "Alias routes redirect into the single canonical URL" (technical) or "No competing peer in crawl scope" (acceptable).
 
-technical →
-core_problem: Duplicate URL variants split crawl signals
-primary_action: Canonicalize and redirect duplicate URLs
+4) primary_action — ONE sentence only: the EXACT transformation that moves the site from overlap to those roles.
+   Derive this from roles: state how page A moves toward page_a_role and page B toward page_b_role using remove/replace/restrict/assign/merge/redirect/canonical as allowed by problem type.
+   When competing_pages_roles_required is true, include BOTH page_a_url and page_b_url (or both path tails) and use ';' or ' and ' to join the two transformations.
+   Do not restate roles verbatim only — state enforceable edits.
 
-acceptable →
-core_problem: Crawl overlap stays within acceptable bounds for current URL set
-primary_action: Prescribe none for merge redirect or consolidate on sampled URLs
+BAD (free-form fluff):
+"Differentiate coverage details"
+
+GOOD (strategic, two markets):
+core_problem: AU and NZ policy pages serve the same decision intent with no market separation.
+page_a_role: NZ policy page represents coverage, pricing, and claims specific to New Zealand residents.
+page_b_role: AU policy page represents coverage, pricing, and claims specific to Australian residents.
+primary_action: Restrict NZ pages to New Zealand-specific coverage and remove shared messaging; restrict AU pages to Australian-specific pricing and proof.
+
+technical (example):
+core_problem: Duplicate host and path routes split crawl signals for the same HTML.
+page_a_role: One canonical URL holds the indexable HTML for this topic.
+page_b_role: All alias hosts and paths send users and signals to that canonical URL.
+primary_action: 301 alias hosts to the canonical URL; set rel=canonical on duplicate paths.
+
+acceptable (example):
+core_problem: Crawl overlap sits inside acceptable bounds for listed URLs.
+page_a_role: Sampled URLs stay published without structural merge.
+page_b_role: No competing peer requires consolidation in this crawl slice.
+primary_action: Prescribe none: no merge, redirect, or consolidate on sampled URLs.
 
 {CONSTRAINT_PROMPT}
 
-Context (clusters, metrics, URLs):
+Full payload:
 {data}
 
-Output shape (only these keys):
+Output JSON with EXACTLY these keys (and no others):
 {{
   "core_problem": "",
+  "page_a_role": "",
+  "page_b_role": "",
   "primary_action": ""
 }}
 """
     for attempt in range(max_attempts):
-        out = llm_client.generate_json(prompt)
+        prompt_attempt = prompt + _pass1_retry_emphasis(attempt)
+        out = llm_client.generate_json(prompt_attempt)
         try:
-            _validate_pass1_output(out, problem_type)
+            _validate_pass1_output(out, problem_type, payload)
         except Exception as e:
-            print(f"[PASS 1 VALIDATION FAILED] Attempt {attempt + 1}: {e}")
+            print(
+                f"[PASS 1 VALIDATION FAILED] attempt={attempt + 1} "
+                f"detail={e!s}"
+            )
             continue
         return out
-    raise ValueError("AI pass 1 failed validation — inspect prompt/output")
+    raise ValueError(
+        "AI pass 1 failed validation after retries — inspect prompt/output; rules were not relaxed"
+    )
 
 
 def _generate_insights_pass2(
@@ -397,45 +586,75 @@ def _generate_insights_pass2(
     max_attempts: int = 3,
 ) -> dict:
     core_problem = (pass1.get("core_problem") or "").strip()
+    page_a_role = (pass1.get("page_a_role") or "").strip()
+    page_b_role = (pass1.get("page_b_role") or "").strip()
     primary_action = (pass1.get("primary_action") or "").strip()
+    framing = build_ai_framing_context(payload)
+    candidates = _collect_candidate_urls_for_binding(payload)
+    metrics_snippet = json.dumps(payload.get("metrics") or {}, indent=2)
     prompt = f"""{_SHARED_RULES}
 {CONSTRAINT_PROMPT}
 
-You are expanding a frozen pass-1 summary into supporting fields. Return JSON only.
+You map pass-1 roles into proof text. Return JSON only (execution_example may contain newline characters inside the string).
 
-Expand the following into structured output.
+SYSTEM TRUTH:
+{json.dumps(framing, indent=2)}
 
-Input:
+Frozen pass-1:
 core_problem: {core_problem}
+page_a_role: {page_a_role}
+page_b_role: {page_b_role}
 primary_action: {primary_action}
 
-Return JSON:
-- why_it_matters (max 40 words)
-- execution_example (specific, URL-based; must include at least one https URL from the payload)
+Payload.metrics (optional reference in why_it_matters):
+{metrics_snippet}
+
+why_it_matters (max 40 words, ONE short paragraph):
+- Include exactly ONE of: a metric reference (e.g. overlap_rate, similarity, cluster) OR an explicit consequence
+  (ranking conflict, decision ambiguity, conversion friction, signal split). Do not require both.
+
+execution_example (multi-line string, transformation map):
+When two or more candidate URLs exist, use this shape with the FIRST TWO candidates as URL A and URL B (copy URLs exactly):
+
+On [URL A]:
+- remove: [overlapping element shared with the other page]
+- add: [element that matches page_a_role]
+
+On [URL B]:
+- remove: [overlapping element]
+- add: [element that matches page_b_role]
+
+MUST include at least one line with remove: or replace: overall.
+MUST make A and B different after the change (different - add: content).
+When only one candidate URL exists, one "On URL:" block with remove + add is enough.
 
 Rules:
-- No vague language (no: clarify, improve, optimize, enhance, refine, align, leverage, utilize)
-- Must stay consistent with the input; do not introduce new problems or new actions
-- Do not contradict core_problem or primary_action
+- No vague language (clarify, improve, optimize, enhance, refine, align, leverage, utilize)
+- Do not introduce new problems beyond pass-1
 
-Payload URLs (use at least one in execution_example):
-{json.dumps(payload.get("page_urls") or [], indent=2)}
+Candidate URLs:
+{json.dumps(candidates, indent=2)}
 
-Output shape (only these keys):
+Output JSON keys exactly:
 {{
   "why_it_matters": "",
   "execution_example": ""
 }}
 """
     for attempt in range(max_attempts):
-        out = llm_client.generate_json(prompt)
+        prompt_attempt = prompt + _pass2_retry_emphasis(attempt)
+        out = llm_client.generate_json(prompt_attempt)
         try:
-            _validate_pass2_output(out, pass1)
+            _validate_pass2_output(out, pass1, payload)
         except Exception as e:
-            print(f"[PASS 2 VALIDATION FAILED] Attempt {attempt + 1}: {e}")
+            print(
+                f"[PASS 2 VALIDATION FAILED] attempt={attempt + 1} detail={e!s}"
+            )
             continue
         return out
-    raise ValueError("AI pass 2 failed validation — inspect prompt/output")
+    raise ValueError(
+        "AI pass 2 failed validation after retries — inspect prompt/output; rules were not relaxed"
+    )
 
 
 def generate_ai_insights(payload, llm_client):
@@ -467,11 +686,15 @@ def generate_ai_insights(payload, llm_client):
     final_output["metrics_explained"] = fb["metrics_explained"]
     final_output["primary_clusters"] = fb["primary_clusters"]
     final_output["supporting_evidence"] = fb["supporting_evidence"]
+    final_output["structured_pass1"] = True
 
-    validate_ai_output_strict(final_output, dominant)
+    validate_ai_output_strict(
+        final_output, dominant, _conflict_context_for_payload(payload)
+    )
     if not validate_ai_output(final_output):
         raise ValueError("AI two-pass merge failed full-shape validation — inspect output")
 
+    final_output["validated_ai_narrative"] = True
     return final_output
 
 
@@ -909,8 +1132,12 @@ def enrich_insights_decision_layer(insights: dict | None, payload: dict) -> dict
         "That blurs conversion paths and ranking focus."
     )
     wi = (out.get("why_it_matters") or "").strip()
-    out["why_it_matters"] = f"{loss_line} {wi}".strip() if wi else loss_line
-    out["business_impact"] = out["why_it_matters"]
+    if out.get("validated_ai_narrative"):
+        out["why_it_matters"] = wi
+        out["business_impact"] = wi
+    else:
+        out["why_it_matters"] = f"{loss_line} {wi}".strip() if wi else loss_line
+        out["business_impact"] = out["why_it_matters"]
 
     try:
         avg_sim = float(m.get("avg_cluster_similarity", 0))
