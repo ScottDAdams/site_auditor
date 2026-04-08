@@ -10,3 +10,4 @@ python-multipart
 python-dotenv
 playwright
 sqlalchemy>=2.0
+httpx

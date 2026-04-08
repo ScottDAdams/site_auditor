@@ -1,0 +1,13 @@
+{% extends "layouts/app_shell.html" %}
+{% from "components/ui_macros.html" import page_header %}
+
+{% block title %}AI Config{% endblock %}
+
+{% block main %}
+{{ page_header("AI configuration", "Model and prompt defaults for narrative polish live here. Decisions stay on the server; the model only refines wording when enabled.") }}
+
+<div class="card">
+  <p class="card__text">OpenAI-backed polish runs only when <code>OPENAI_API_KEY</code> is set. Insight and executive recommendations are built deterministically first.</p>
+  <p class="card__muted">Advanced engine and prompt management will appear in a later release.</p>
+</div>
+{% endblock %}

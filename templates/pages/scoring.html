@@ -1,0 +1,26 @@
+{% extends "layouts/app_shell.html" %}
+{% from "components/ui_macros.html" import page_header %}
+
+{% block title %}Scoring Weights{% endblock %}
+
+{% block main %}
+{{ page_header("Scoring weights", "These pillars shape how we interpret overall site health in the report. Raising Content Quality increases how strongly duplication and overlap influence the score.") }}
+
+<div class="card" style="margin-bottom: 24px;">
+  <p class="card__text">Higher weight on <strong>Content Quality</strong> increases the priority of duplication and overlap issues in the overall picture. Adjust weights so they reflect what matters most for your program; they should stay close to 1.0 in total.</p>
+</div>
+
+<form method="post" action="/scoring" class="card scoring-grid">
+  {% for name, val in pillars %}
+  <div class="scoring-row">
+    <label>
+      <span>{{ name }}</span>
+      <input type="number" name="val_{{ loop.index0 }}" value="{{ val }}" step="0.01" min="0" max="1" required />
+    </label>
+    <input type="hidden" name="key_{{ loop.index0 }}" value="{{ name }}" />
+  </div>
+  {% endfor %}
+  <input type="hidden" name="n" value="{{ pillars|length }}" />
+  <button type="submit" class="btn-primary">Save weights</button>
+</form>
+{% endblock %}

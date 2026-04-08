@@ -1,0 +1,106 @@
+{% extends "layouts/app_shell.html" %}
+{% from "components/ui_macros.html" import page_header, metric_badge %}
+
+{% block title %}Run Audit{% endblock %}
+
+{% block main %}
+{{ page_header("Run Audit", "Enter one or more site URLs (comma-separated). We crawl, cluster duplicate groups, and produce an executive brief plus technical detail when you need it.") }}
+
+<section class="card" style="margin-bottom: 24px;">
+  <form action="/run-audit" method="post" class="audit-form-row">
+    <input type="text" name="sites" placeholder="https://example.com, https://example.co.nz" aria-label="Site URLs" />
+    <button type="submit" class="btn-primary">Run Audit</button>
+  </form>
+  {% if request.query_params.get('err') == 'no_sites' %}
+  <p class="card__muted" style="color: #b42318;">Add at least one valid URL to run an audit.</p>
+  {% endif %}
+</section>
+
+<section class="status-banner {% if state.status == 'running' %}status-banner--running{% elif state.status == 'error' %}status-banner--error{% endif %}" aria-live="polite">
+  <strong>Last run</strong>
+  <p id="audit-status-line" style="margin: 8px 0 0 0;">Status: {{ state.status }}</p>
+  <p id="audit-phase-line" class="audit-phase" {% if state.status not in ('running', 'error') %}hidden{% endif %} style="margin: 6px 0 0 0; color: var(--app-muted);">{% if state.phase %}{{ state.phase }}{% elif state.status == 'running' %}Working…{% endif %}</p>
+  <p class="audit-error" id="audit-error-line" {% if not state.error %}hidden{% endif %} style="margin: 6px 0 0 0; color: #b42318;">{{ state.error or '' }}</p>
+</section>
+
+{% if state.summary_metrics %}
+<section class="section-block">
+  <h2 class="section-block__title">Summary</h2>
+  <div class="metrics-row">
+    {{ metric_badge("Pages crawled", state.summary_metrics.pages_crawled) }}
+    {{ metric_badge("Duplicate groups", state.summary_metrics.duplicate_groups) }}
+    {{ metric_badge("Content overlap", state.summary_metrics.content_overlap) }}
+    {{ metric_badge("Page similarity", state.summary_metrics.page_similarity) }}
+    {{ metric_badge("Content distinctness", state.summary_metrics.content_distinctness) }}
+  </div>
+  {% if state.last_report_id %}
+  <p class="card__muted"><a href="/reports/{{ state.last_report_id }}">Open the latest report →</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if state.status == 'done' and state.last_report_id %}
+<section class="section-block">
+  <h2 class="section-block__title">Results</h2>
+  <p class="card__muted">Your latest audit is ready. Open the structured report for the executive summary, action plan, and optional technical detail.</p>
+  <a class="btn-primary" href="/reports/{{ state.last_report_id }}" style="display: inline-block; text-decoration: none;">View report</a>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var pollMs = 900;
+  function $(id) { return document.getElementById(id); }
+  function apply(data) {
+    var st = data.status || "";
+    var ph = data.phase || "";
+    var err = data.error || "";
+    var statusLine = $("audit-status-line");
+    var phaseLine = $("audit-phase-line");
+    var errLine = $("audit-error-line");
+    var banner = document.querySelector(".status-banner");
+    if (banner) {
+      banner.classList.remove("status-banner--running", "status-banner--error");
+      if (st === "running") banner.classList.add("status-banner--running");
+      if (st === "error") banner.classList.add("status-banner--error");
+    }
+    if (statusLine) statusLine.textContent = "Status: " + st;
+    if (phaseLine) {
+      if (st === "running") {
+        phaseLine.textContent = ph || "Working…";
+        phaseLine.hidden = false;
+      } else if (st === "error") {
+        phaseLine.textContent = ph || err || "Audit failed.";
+        phaseLine.hidden = false;
+      } else {
+        phaseLine.textContent = ph || "";
+        phaseLine.hidden = st === "done" || !ph;
+      }
+    }
+    if (errLine) {
+      if (st === "error" && err) {
+        errLine.textContent = err;
+        errLine.hidden = false;
+      } else {
+        errLine.hidden = true;
+      }
+    }
+    if (st === "done") {
+      window.location.href = "/audit";
+    }
+  }
+  function tick() {
+    fetch("/api/audit-status", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(apply)
+      .catch(function () {});
+  }
+  {% if state.status == 'running' %}
+  setInterval(tick, pollMs);
+  tick();
+  {% endif %}
+})();
+</script>
+{% endblock %}

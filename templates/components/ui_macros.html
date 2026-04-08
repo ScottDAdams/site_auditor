@@ -1,0 +1,34 @@
+{# Reusable UI primitives — consulting tone, no raw metric variable names in labels. #}
+
+{% macro page_header(title, subtitle='') %}
+<header class="page-header">
+  <h1 class="page-header__title">{{ title }}</h1>
+  {% if subtitle %}
+  <p class="page-header__subtitle">{{ subtitle }}</p>
+  {% endif %}
+</header>
+{% endmacro %}
+
+{% macro card(class='') %}
+<div class="card {{ class }}">{% if caller %}{{ caller() }}{% endif %}</div>
+{% endmacro %}
+
+{% macro section_block(title, id='') %}
+<section class="section-block" {% if id %}id="{{ id }}"{% endif %}>
+  <h2 class="section-block__title">{{ title }}</h2>
+  <div class="section-block__body">{% if caller %}{{ caller() }}{% endif %}</div>
+</section>
+{% endmacro %}
+
+{% macro metric_badge(label, value_text) %}
+<span class="metric-pill"><span class="metric-pill__label">{{ label }}</span><span class="metric-pill__value">{{ value_text }}</span></span>
+{% endmacro %}
+
+{% macro priority_badge(level) %}
+{% set l = (level or 'medium')|lower|trim %}
+<span class="priority-badge priority-badge--{{ l }}">{{ (level or 'medium')|title }}</span>
+{% endmacro %}
+
+{% macro transformation_badge(tt) %}
+<span class="tt-badge tt-badge--{{ (tt or 'unknown')|lower|replace(' ', '-') }}">{{ (tt or '—')|replace('_', ' ')|title }}</span>
+{% endmacro %}

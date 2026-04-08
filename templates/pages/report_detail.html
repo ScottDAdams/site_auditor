@@ -1,0 +1,94 @@
+{% extends "layouts/app_shell.html" %}
+{% from "components/ui_macros.html" import page_header, priority_badge, transformation_badge %}
+
+{% block title %}Report{% endblock %}
+
+{% block main %}
+{{ page_header("Audit report", report.domains) }}
+
+{# Section 1 — Executive (default) #}
+<section class="section-block">
+  <h2 class="section-block__title">Executive summary</h2>
+  <div class="metrics-row" style="margin-bottom: 20px;">
+    <span class="metric-pill"><span class="metric-pill__label">Health score</span><span class="metric-pill__value">{{ report.score }}</span></span>
+    {{ priority_badge(report.priority_level or 'medium') }}
+    {% if es and es.site_health %}
+    <span class="metric-pill"><span class="metric-pill__label">Focus</span><span class="metric-pill__value">{{ es.site_health.primary_issue_type | title }}</span></span>
+    {% endif %}
+  </div>
+
+  {% if exec_text %}
+  <div class="card" style="white-space: pre-wrap; font-size: 0.98rem; line-height: 1.55;">{{ exec_text }}</div>
+  {% endif %}
+
+  {% if es and es.top_issues %}
+  <h3 style="margin: 28px 0 14px 0; font-size: 1.05rem;">Top issues</h3>
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    {% for issue in es.top_issues %}
+    <article class="card">
+      <div class="card__meta">
+        {{ transformation_badge(issue.transformation_type) }}
+        {{ priority_badge(issue.priority_level or 'medium') }}
+        <span class="metric-pill"><span class="metric-pill__label">Priority score</span><span class="metric-pill__value">{{ '%.0f'|format(issue.priority_score or 0) }}</span></span>
+      </div>
+      <p class="card__title">{{ issue.problem }}</p>
+      <p class="card__muted"><strong>Why it matters:</strong> {{ issue.business_impact }}</p>
+      <p class="card__text"><strong>Recommended action:</strong> {{ issue.recommended_action }}</p>
+      {% if issue.urls %}
+      <p class="card__muted" style="font-size: 0.85rem;">{% for u in issue.urls[:5] %}{{ u }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+{# Section 2 — Action plan #}
+{% if es and es.execution_plan %}
+<section class="section-block">
+  <h2 class="section-block__title">Action plan</h2>
+  {% for step in es.execution_plan %}
+  <details class="action-step" {% if loop.first %}open{% endif %}>
+    <summary>Step {{ step.step }} — {{ step.focus }}</summary>
+    <div class="action-step__body">
+      <ul style="margin: 0; padding-left: 1.2rem;">
+        {% for a in step.actions %}
+        <li style="margin-bottom: 8px;">{{ a }}</li>
+        {% endfor %}
+      </ul>
+      {% if step.expected_outcome %}
+      <p class="card__muted" style="margin-top: 12px;"><strong>Expected outcome:</strong> {{ step.expected_outcome }}</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if roadmap and roadmap.roadmap %}
+<section class="section-block">
+  <h2 class="section-block__title">Roadmap steps</h2>
+  {% for item in roadmap.roadmap %}
+  <details class="action-step">
+    <summary>Step {{ item.step }} — {{ item.title or 'Initiative' }}</summary>
+    <div class="action-step__body">
+      <p class="card__text">{{ item.description }}</p>
+      {% if item.target_urls %}
+      <p class="card__muted">{% for u in item.target_urls %}{{ u }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+{# Section 3 — Technical (collapsed) #}
+<details class="tech-details">
+  <summary>Technical details</summary>
+  <div class="tech-details__body audit-report">
+    {{ report_html | safe }}
+  </div>
+</details>
+
+<p style="margin-top: 32px;"><a href="/reports">← All reports</a></p>
+{% endblock %}

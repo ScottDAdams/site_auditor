@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}{{ title | default('Site Auditor') }}{% endblock %} · Site Auditor</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/app-shell.css" />
+</head>
+<body class="app-body">
+  <div class="app-shell">
+    <aside class="app-sidebar" aria-label="Main navigation">
+      <div class="app-sidebar__brand">Site Auditor</div>
+      <nav class="app-sidebar__nav">
+        <a href="/audit" class="app-sidebar__link {% if nav_active == 'audit' %}is-active{% endif %}">Run Audit</a>
+        <a href="/reports" class="app-sidebar__link {% if nav_active == 'reports' %}is-active{% endif %}">Reports</a>
+      </nav>
+      <div class="app-sidebar__divider"></div>
+      <nav class="app-sidebar__nav">
+        <a href="/rules" class="app-sidebar__link {% if nav_active == 'rules' %}is-active{% endif %}">Content rules engine</a>
+        <a href="/scoring" class="app-sidebar__link {% if nav_active == 'scoring' %}is-active{% endif %}">Scoring Weights</a>
+        <a href="/ai-config" class="app-sidebar__link {% if nav_active == 'ai' %}is-active{% endif %}">AI Config</a>
+      </nav>
+    </aside>
+    <main class="app-main">
+      {% block main %}{% endblock %}
+    </main>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

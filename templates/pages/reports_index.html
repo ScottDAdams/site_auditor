@@ -1,0 +1,37 @@
+{% extends "layouts/app_shell.html" %}
+{% from "components/ui_macros.html" import page_header, priority_badge %}
+
+{% block title %}Reports{% endblock %}
+
+{% block main %}
+{{ page_header("Reports", "Past audits with health score and priority. Open any row for the full brief.") }}
+
+{% if rows %}
+<table class="reports-table">
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Sites</th>
+      <th>Score</th>
+      <th>Priority</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.created_display }}</td>
+      <td>{{ r.domains }}</td>
+      <td><strong>{{ r.score }}</strong></td>
+      <td>{{ priority_badge(r.priority_level or 'medium') }}</td>
+      <td><a href="/reports/{{ r.id }}">View report</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card">
+  <p class="card__muted">No saved audits yet. Run an audit from <a href="/audit">Run Audit</a>.</p>
+</div>
+{% endif %}
+{% endblock %}

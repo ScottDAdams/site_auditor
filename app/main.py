@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -60,8 +61,11 @@ from app.executive_summary import (
 )
 from app.report import generate_report
 from app.utils import canonicalize_url
-from app.db.session import init_db
-from app.admin_routes import router as admin_router
+from sqlalchemy import select
+
+from app.db.models import AuditReport
+from app.db.session import SessionLocal, init_db
+from app.rules_routes import router as rules_router
 
 
 def _filter_roadmap_equivalent_targets(roadmap_obj: dict | None) -> dict:
@@ -88,7 +92,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(admin_router)
+app.include_router(rules_router)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.is_dir():
@@ -112,6 +116,8 @@ STATE = {
     "clusters": [],
     "findings": [],
     "report": "",
+    "last_report_id": None,
+    "summary_metrics": None,
 }
 
 
@@ -149,33 +155,144 @@ def normalize_site_seed(url: str) -> str | None:
     return url
 
 
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    safe_state = {
-        "status": STATE.get("status"),
-        "phase": STATE.get("phase") or "",
-        "error": STATE.get("error"),
-        "clusters": [
-            {
-                "avg_similarity": c.get("avg_similarity"),
-                "dominant_url": c.get("dominant_url"),
-                "competing_urls": c.get("competing_urls"),
-                "decision_type": c.get("decision_type"),
-                "pages": [
-                    {"url": p.get("url"), "type": p.get("type")}
-                    for p in c.get("pages", [])
-                ],
-            }
-            for c in STATE.get("clusters", [])
-        ],
-        "report": STATE.get("report", "")
-    }
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/audit", status_code=302)
 
+
+@app.get("/audit", response_class=HTMLResponse)
+def audit_page(request: Request):
     return templates.TemplateResponse(
         request,
-        "index.html",
-        {"state": safe_state},
+        "pages/audit.html",
+        {
+            "request": request,
+            "nav_active": "audit",
+            "title": "Run Audit",
+            "state": {
+                "status": STATE.get("status"),
+                "phase": STATE.get("phase") or "",
+                "error": STATE.get("error"),
+                "summary_metrics": STATE.get("summary_metrics"),
+                "last_report_id": STATE.get("last_report_id"),
+            },
+        },
     )
+
+
+@app.get("/reports", response_class=HTMLResponse)
+def reports_index(request: Request):
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(AuditReport).order_by(AuditReport.created_at.desc()).limit(100)
+        ).all()
+    display_rows = []
+    for r in rows:
+        display_rows.append(
+            {
+                "id": r.id,
+                "domains": (r.domains[:96] + "…") if len(r.domains) > 96 else r.domains,
+                "score": r.score,
+                "priority_level": r.priority_level or "medium",
+                "created_display": r.created_at.strftime("%Y-%m-%d %H:%M UTC"),
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "pages/reports_index.html",
+        {
+            "request": request,
+            "nav_active": "reports",
+            "title": "Reports",
+            "rows": display_rows,
+        },
+    )
+
+
+@app.get("/reports/{report_id}", response_class=HTMLResponse)
+def report_detail(request: Request, report_id: int):
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+    return templates.TemplateResponse(
+        request,
+        "pages/report_detail.html",
+        {
+            "request": request,
+            "nav_active": "reports",
+            "title": "Report",
+            "report": row,
+            "report_html": row.report_html,
+            "es": snapshot.get("executive_summary_data") or {},
+            "exec_text": snapshot.get("executive_summary_text") or "",
+            "roadmap": snapshot.get("execution_roadmap") or {},
+        },
+    )
+
+
+@app.get("/scoring", response_class=HTMLResponse)
+def scoring_page(request: Request):
+    from app.scoring.benchmarks import get_scoring_weights
+
+    weights = get_scoring_weights()
+    pillars = sorted(weights.items(), key=lambda x: x[0])
+    return templates.TemplateResponse(
+        request,
+        "pages/scoring.html",
+        {
+            "request": request,
+            "nav_active": "scoring",
+            "title": "Scoring weights",
+            "pillars": pillars,
+        },
+    )
+
+
+@app.post("/scoring")
+async def scoring_save(request: Request):
+    from app.scoring.benchmarks import save_scoring_weights
+
+    form = await request.form()
+    try:
+        n = int(form.get("n") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    new: dict[str, float] = {}
+    for i in range(n):
+        k = form.get(f"key_{i}")
+        v = form.get(f"val_{i}")
+        if k:
+            try:
+                new[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+    if new:
+        save_scoring_weights(new)
+    return RedirectResponse(url="/scoring", status_code=303)
+
+
+@app.get("/ai-config", response_class=HTMLResponse)
+def ai_config_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "pages/ai_config.html",
+        {
+            "request": request,
+            "nav_active": "ai",
+            "title": "AI Config",
+        },
+    )
+
+
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/decision-rules", include_in_schema=False)
+def legacy_admin_redirect():
+    return RedirectResponse(url="/rules", status_code=302)
 
 
 @app.get("/api/audit-status")
@@ -401,6 +518,39 @@ def _run_audit_job(site_list: list[str]) -> None:
             single_site_mode=single_site_mode,
         )
 
+        snapshot = {
+            "executive_summary_data": summary_data,
+            "executive_summary_text": exec_body,
+            "execution_roadmap": execution_roadmap,
+        }
+        summary_metrics = {
+            "pages_crawled": str(len(pages)),
+            "duplicate_groups": str(len(clusters)),
+            "content_overlap": f"{round(metrics['overlap_rate'] * 100, 1)}%",
+            "page_similarity": f"{round(metrics['avg_cluster_similarity'] * 100, 1)}%",
+            "content_distinctness": f"{round(metrics['content_uniqueness_score'] * 100, 1)}%",
+        }
+
+        last_id = None
+        try:
+            with SessionLocal() as db:
+                ar = AuditReport(
+                    domains=",".join(site_list)[:512],
+                    score=int(round(float(score))),
+                    priority_level=str(
+                        analysis_payload.get("priority_level")
+                        or ai_insights.get("priority_level")
+                        or ""
+                    ),
+                    report_html=report,
+                    snapshot_json=json.dumps(snapshot, default=str),
+                )
+                db.add(ar)
+                db.commit()
+                last_id = ar.id
+        except Exception as persist_exc:
+            print("AUDIT PERSIST ERROR:", persist_exc)
+
         STATE.update(
             {
                 "status": "done",
@@ -410,6 +560,8 @@ def _run_audit_job(site_list: list[str]) -> None:
                 "clusters": [c for c in clusters if is_valid_cluster(c)],
                 "findings": all_findings,
                 "report": report,
+                "last_report_id": last_id,
+                "summary_metrics": summary_metrics,
             }
         )
     except Exception as exc:
@@ -424,7 +576,7 @@ def run_audit(sites: str = Form(...)):
     site_list = [normalize_site_seed(s) for s in sites.split(",")]
     site_list = [s for s in site_list if s]
     if not site_list:
-        return RedirectResponse(url="/?err=no_sites", status_code=303)
+        return RedirectResponse(url="/audit?err=no_sites", status_code=303)
 
     STATE.update(
         {
@@ -435,7 +587,9 @@ def run_audit(sites: str = Form(...)):
             "clusters": [],
             "findings": [],
             "report": "",
+            "last_report_id": None,
+            "summary_metrics": None,
         }
     )
     threading.Thread(target=_run_audit_job, args=(site_list,), daemon=True).start()
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/audit", status_code=303)
