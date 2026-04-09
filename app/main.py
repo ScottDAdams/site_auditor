@@ -65,11 +65,11 @@ from app.executive_summary import (
     build_executive_summary_data,
     render_ceo_summary,
     render_executive_summary,
-    render_executive_summary_llm,
-    split_ceo_and_operational,
     validate_executive_alignment,
-    validate_executive_output,
 )
+from app.executive_narrative import generate_executive_narrative
+from app.report_downloads import build_technical_markdown
+from app.verification_pack import build_verification_pack
 from app.report import generate_report
 from app.utils import canonicalize_url
 from sqlalchemy import select
@@ -294,6 +294,11 @@ def download_executive_markdown(report_id: int):
         snapshot = json.loads(row.snapshot_json or "{}")
     except json.JSONDecodeError:
         snapshot = {}
+    executive_report_md = str(snapshot.get("executive_report_md") or "").strip()
+    if executive_report_md:
+        return _markdown_download_response(
+            executive_report_md, f"executive-report-{report_id}.md"
+        )
     es = snapshot.get("executive_summary_data") or {}
     exec_text = snapshot.get("executive_summary_text") or ""
     roadmap = snapshot.get("execution_roadmap") or {}
@@ -350,6 +355,30 @@ def download_boardroom_json(report_id: int):
     safe = f"boardroom-brief-{report_id}.json"
     return JSONResponse(
         content=body,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@app.get("/reports/{report_id}/download/verification.json")
+def download_verification_json(report_id: int):
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+    body = snapshot.get("verification_pack")
+    if not isinstance(body, dict):
+        es = snapshot.get("executive_summary_data") or {}
+        body = es.get("verification_pack") if isinstance(es, dict) else {"cluster_proofs": []}
+    safe = f"verification-pack-{report_id}.json"
+    return JSONResponse(
+        content=body or {"cluster_proofs": []},
         headers={
             "Content-Disposition": f'attachment; filename="{safe}"',
             "Cache-Control": "private, no-store",
@@ -638,25 +667,34 @@ def _run_audit_job(site_list: list[str]) -> None:
         ceo_text = render_ceo_summary(summary_data)
         exec_body = render_executive_summary(summary_data)
         full_brief = f"{ceo_text}\n\n---\n\n{exec_body}"
-        validate_executive_output(full_brief, summary_data, operational_brief=exec_body)
-        exec_body_out = full_brief
-        if os.getenv("OPENAI_API_KEY"):
-            try:
-                llm_ex = LLMClient()
-                polished = render_executive_summary_llm(summary_data, llm_ex)
-                if polished:
-                    try:
-                        _, op_part = split_ceo_and_operational(polished)
-                        validate_executive_output(
-                            polished,
-                            summary_data,
-                            operational_brief=op_part or exec_body,
-                        )
-                        exec_body_out = polished
-                    except ValueError:
-                        pass
-            except Exception:
-                pass
+        verification_pack = build_verification_pack(analysis_payload, strategic_rows)
+        summary_data["verification_pack"] = verification_pack
+        summary_data["verification_pack_url"] = "/download/verification.json"
+        technical_report_md = build_technical_markdown(
+            "",  # filled after report HTML render below
+            domains=",".join(site_list),
+            score=int(round(float(score))),
+            priority_level=str(
+                analysis_payload.get("priority_level")
+                or ai_insights.get("priority_level")
+                or ""
+            ),
+            report_id=0,
+            es=summary_data,
+        )
+        executive_brief_json = {
+            **summary_data,
+            "verification_pack": verification_pack,
+            "ceo_summary_text": ceo_text,
+            "operational_text": exec_body,
+            "full_brief_text": full_brief,
+        }
+        narrative = generate_executive_narrative(
+            {"openai_enabled": bool(os.getenv("OPENAI_API_KEY")), **analysis_payload},
+            technical_report_md,
+            executive_brief_json,
+        )
+        exec_body_out = narrative.get("executive_report_md", "").strip() or full_brief
         ai_insights["executive_summary_data"] = summary_data
         ai_insights["executive_summary_text"] = exec_body_out
 
@@ -675,10 +713,25 @@ def _run_audit_job(site_list: list[str]) -> None:
             single_site_mode=single_site_mode,
         )
 
+        technical_report_md = build_technical_markdown(
+            report,
+            domains=",".join(site_list),
+            score=int(round(float(score))),
+            priority_level=str(
+                analysis_payload.get("priority_level")
+                or ai_insights.get("priority_level")
+                or ""
+            ),
+            report_id=0,
+            es=summary_data,
+        )
         snapshot = {
             "executive_summary_data": summary_data,
             "executive_summary_text": exec_body_out,
+            "executive_report_md": exec_body_out,
+            "technical_report_md": technical_report_md,
             "execution_roadmap": execution_roadmap,
+            "verification_pack": verification_pack,
         }
         summary_metrics = {
             "pages_crawled": str(len(pages)),

@@ -116,6 +116,7 @@ class TestUIPhase6b(unittest.TestCase):
             self.assertIn(b"download/executive.md", r.content)
             self.assertIn(b"download/technical.md", r.content)
             self.assertIn(b"download/boardroom.json", r.content)
+            self.assertIn(b"download/verification.json", r.content)
             ex = self.client.get(f"/reports/{rid}/download/executive.md")
             self.assertEqual(ex.status_code, 200)
             self.assertIn("markdown", ex.headers.get("content-type", ""))
