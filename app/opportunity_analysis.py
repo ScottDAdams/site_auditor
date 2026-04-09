@@ -98,7 +98,7 @@ def _structured_data_opportunity(pages: list[dict]) -> dict[str, Any] | None:
         "pages": candidates,
         "lever": "These URLs already answer buyer questions in prose but omit machine-readable structured answers.",
         "mechanism": "FAQ, HowTo, or Product JSON-LD can expand how your listing appears and lift clicks from existing demand.",
-        "opportunity": "These pages could qualify for enhanced search results",
+        "opportunity": "These pages are strong candidates for enhanced search results",
         "impact": "More clicks from the same demand without buying net-new traffic",
         "action": "Add FAQ, HowTo, or Product JSON-LD to these URLs as appropriate",
         "confidence": "medium",

@@ -12,7 +12,9 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from app.analyzer import REMEDIATION_DECISION_TYPES
+from app.boardroom_summary import build_boardroom_summary
 from app.decision_arbitration import resolve_primary_strategy, validate_narrative_against_strategy
+from app.evidence_engine import build_decision_rationale, evidence_pack_for_legacy_row
 from app.narrative_consolidation import build_consolidated_top_issues
 from app.opportunity_analysis import analyze_opportunities
 
@@ -40,6 +42,11 @@ _SEO_JARGON_TERMS = (
     "keyword cannibal",
     "meta description",
     "title tag",
+)
+
+_HEDGE_WORDS_RE = re.compile(
+    r"\b(you\s+should|could|might|consider)\b",
+    re.I,
 )
 
 # Opening must not read like multiple competing directives.
@@ -122,41 +129,41 @@ def _problem_title(transformation_type: str) -> str:
 
 
 def _decision_line(transformation_type: str, urls: list[str]) -> str:
-    """Direct advisory language (you are not merely suggesting)."""
+    """Direct advisory language (definitive, not tentative)."""
     tt = (transformation_type or "").strip().lower()
     u0 = urls[0] if urls else "your primary URL"
     u1 = urls[1] if len(urls) > 1 else ""
     if tt in ("merge", "consolidate"):
         if u1:
             return (
-                f"You should merge these pages into a single primary page; fold overlapping content from "
+                f"The correct move is to merge these pages into a single primary page; fold overlapping content from "
                 f"{u0} and {u1} into one winner."
             )
-        return f"You should merge duplicate surfaces into one primary page anchored at {u0}."
+        return f"The correct move is to merge duplicate surfaces into one primary page anchored at {u0}."
     if tt == "redirect":
         if u1:
             return (
-                f"You should redirect the duplicate route to one canonical destination "
+                f"The correct move is to redirect the duplicate route to one canonical destination "
                 f"({u0} as primary, {u1} as alternate)."
             )
         return (
-            f"You should redirect duplicate routes so only {u0} remains the customer-facing destination."
+            f"The correct move is to redirect duplicate routes so only {u0} remains the customer-facing destination."
         )
     if tt in ("isolate", "differentiate", "split"):
         if u1:
             return (
-                f"You should split roles: make {u0} and {u1} serve different buyer decisions "
+                f"The correct move is to split roles: make {u0} and {u1} serve different buyer decisions "
                 f"with different proof and offers."
             )
         return (
-            f"You should give {u0} a distinct job so it stops fighting sibling pages for the same decision."
+            f"The correct move is to give {u0} a distinct job so it stops fighting sibling pages for the same decision."
         )
     if tt == "retain":
         return (
-            f"You should keep {u0} live, document its scope, and watch for drift—no structural merge now."
+            f"The correct move is to keep {u0} live, document its scope, and watch for drift—no structural merge now."
         )
     return (
-        "You should pick one page to own this decision and align the rest as support or redirects."
+        "The correct move is to pick one page to own this decision and align the rest as support or redirects."
     )
 
 
@@ -165,7 +172,7 @@ def _why_line(transformation_type: str) -> str:
     if tt in ("merge", "consolidate"):
         return "Competing intent is splitting authority and blurring which page should win the buyer."
     if tt == "redirect":
-        return "Two doors to the same story dilute focus and waste attention you could spend on conversion."
+        return "Two doors to the same story dilute focus and waste attention that belongs on conversion."
     if tt in ("isolate", "differentiate", "split"):
         return "Similar pages force trade-offs in messaging and weaken clarity at the moment of choice."
     if tt == "retain":
@@ -176,7 +183,7 @@ def _why_line(transformation_type: str) -> str:
 def _risk_if_ignored_line(transformation_type: str) -> str:
     _ = transformation_type
     return (
-        "You keep competing against yourself—paid spend papers over a structural hole you could fix in the site."
+        "You keep competing against yourself—paid spend papers over a structural hole the site must fix in structure."
     )
 
 
@@ -186,7 +193,7 @@ def build_primary_bet(summary_data: dict) -> dict[str, str]:
     if not issues:
         return {
             "action": (
-                "You should name one primary page for each major buyer decision before you fund more content "
+                "The correct move is to name one primary page for each major buyer decision before you fund more content "
                 "or paid reach."
             ),
             "why_this_over_others": (
@@ -200,7 +207,7 @@ def build_primary_bet(summary_data: dict) -> dict[str, str]:
     dec = str(first.get("decision") or "").strip()
     out = str(first.get("outcome") or "").strip()
     return {
-        "action": dec or "You should resolve the lead structural conflict before you scale anything else.",
+        "action": dec or "The correct move is to resolve the lead structural conflict before you scale anything else.",
         "why_this_over_others": (
             "It targets the highest-priority split this audit surfaced—before you add inventory or buy more reach."
         ),
@@ -279,7 +286,7 @@ def build_ceo_summary_struct(num_issue_groups: int) -> dict[str, Any]:
             ),
             (
                 "Ignore this and you keep competing against yourself—paid acquisition replaces "
-                "clarity you could fix in structure."
+                "clarity that structure fixes directly."
             ),
         ]
     }
@@ -313,7 +320,7 @@ def render_ceo_summary(summary_data: dict) -> str:
     stall = (
         f"If you do nothing, you keep competing against yourself.\n\n"
         f"Growth plateaus even with more pages.\n\n"
-        f"Paid acquisition fills a gap that structure could have closed."
+        f"Paid acquisition fills a gap that structure closes when you fix the split."
     )
     return f"{s1}\n\n{bottom}\n\n{stall}".strip()
 
@@ -342,6 +349,7 @@ def _build_legacy_top_issues(
     top_n: list[dict],
     strategic: list[dict],
     metrics: dict,
+    primary_strategy: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Per-cluster cards (pre Phase 10) when consolidation yields nothing."""
     top_issues: list[dict[str, Any]] = []
@@ -367,6 +375,10 @@ def _build_legacy_top_issues(
         outcome = map_action_to_outcome(tt)
         business_consequence = map_problem_to_business_impact(tt, metrics)
         problem_title = _problem_title(tt)
+        evidence = evidence_pack_for_legacy_row(row, payload, tt)
+        decision_rationale = build_decision_rationale(
+            "overlap_same_intent", tt, evidence, urls, primary_strategy
+        )
         top_issues.append(
             {
                 "problem": problem_title,
@@ -382,6 +394,8 @@ def _build_legacy_top_issues(
                 "priority_score": ps_f,
                 "priority_level": pl,
                 "recommended_action": decision,
+                "evidence": evidence,
+                "decision_rationale": decision_rationale,
             }
         )
     return top_issues
@@ -457,7 +471,7 @@ def build_executive_summary_data(payload: dict, insights: dict) -> dict[str, Any
     )
     if not top_issues:
         top_issues = _build_legacy_top_issues(
-            payload, insights, top_n, strategic, metrics
+            payload, insights, top_n, strategic, metrics, ps_early
         )
 
     summary_data: dict[str, Any] = {
@@ -481,6 +495,15 @@ def build_executive_summary_data(payload: dict, insights: dict) -> dict[str, Any
     summary_data["expected_outcome"] = {"bullets": list(EXPECTED_OUTCOME_BULLETS)}
     summary_data["opportunities"] = opps_early
     summary_data["primary_strategy"] = payload.get("primary_strategy") or ps_early
+    summary_data["_metrics_snapshot"] = {
+        k: v
+        for k, v in {
+            "overlap_rate": metrics.get("overlap_rate"),
+            "avg_cluster_similarity": metrics.get("avg_cluster_similarity"),
+        }.items()
+        if v is not None
+    }
+    summary_data["boardroom_summary"] = build_boardroom_summary(summary_data)
     return summary_data
 
 
@@ -664,6 +687,25 @@ def render_executive_summary(summary_data: dict) -> str:
             lines.append(f"What to do: {dec}")
             lines.append(f"What happens if you ignore it: {risk}")
             lines.append(f"On success: {out}")
+            ev = iss.get("evidence") if isinstance(iss.get("evidence"), dict) else {}
+            if ev:
+                sim = ev.get("similarity_score")
+                if sim is not None:
+                    try:
+                        lines.append(f"Similarity (combined signal): {int(round(float(sim) * 100))}%")
+                    except (TypeError, ValueError):
+                        pass
+                shared = ev.get("shared_sections") or []
+                if shared:
+                    lines.append("Shared sections (from crawl sample):")
+                    for s in shared[:5]:
+                        lines.append(f"  • {s}")
+                interp = (ev.get("interpretation") or "").strip()
+                if interp:
+                    lines.append(f"Interpretation: {interp}")
+            rat = (iss.get("decision_rationale") or "").strip()
+            if rat:
+                lines.append(f"Why this is the correct move: {rat}")
             if urls:
                 lines.append(f"URLs: {', '.join(str(u) for u in urls[:4])}")
             lines.append("")
@@ -898,6 +940,8 @@ def validate_executive_alignment(summary_data: dict) -> None:
     for p in paras:
         if len(str(p).split()) < 8:
             raise ValueError("[rule:ceo_summary_paragraph_density] each CEO paragraph must be substantive")
+        if _HEDGE_WORDS_RE.search(str(p)):
+            raise ValueError("[rule:ceo_summary_hedge] CEO paragraphs must not use hedging (you should/could/might/consider)")
 
     eo = summary_data.get("expected_outcome")
     if not isinstance(eo, dict) or len(eo.get("bullets") or []) < 3:
@@ -916,6 +960,24 @@ def validate_executive_alignment(summary_data: dict) -> None:
         for term in _FORBIDDEN_EXECUTIVE_TERMS:
             if term in dec.lower():
                 raise ValueError(f"[rule:executive_decision_clean] decision must not contain {term!r}")
+        if _HEDGE_WORDS_RE.search(dec):
+            raise ValueError(
+                "[rule:executive_decision_hedge] decision must not use hedging (you should/could/might/consider)"
+            )
+        rat = (iss.get("decision_rationale") or "").strip()
+        if len(rat.split()) < 12:
+            raise ValueError("[rule:executive_decision_rationale] decision_rationale must be substantive")
+        if "correct move" not in rat.lower():
+            raise ValueError("[rule:executive_decision_rationale_tone] decision_rationale must anchor on the correct move")
+        if _HEDGE_WORDS_RE.search(rat):
+            raise ValueError(
+                "[rule:executive_decision_rationale_hedge] decision_rationale must not use hedging"
+            )
+        ev = iss.get("evidence")
+        if not isinstance(ev, dict):
+            raise ValueError("[rule:executive_evidence_shape] evidence object required per issue")
+        if not (str(ev.get("interpretation") or "").strip() or (ev.get("shared_sections") or [])):
+            raise ValueError("[rule:executive_evidence_content] evidence needs interpretation or shared_sections")
         why = (iss.get("why") or "").strip()
         if not why:
             raise ValueError("[rule:executive_why] missing why")
@@ -929,7 +991,7 @@ def validate_executive_alignment(summary_data: dict) -> None:
         if not out:
             raise ValueError("[rule:executive_outcome] missing outcome")
         for term in _SEO_JARGON_TERMS:
-            blob = f"{dec} {why} {bc} {risk} {out}".lower()
+            blob = f"{dec} {why} {bc} {risk} {out} {rat}".lower()
             if term in blob:
                 raise ValueError(f"[rule:executive_issue_no_seo_jargon] issue text must not contain {term!r}")
 
@@ -939,6 +1001,8 @@ def validate_executive_alignment(summary_data: dict) -> None:
     for k in ("action", "why_this_over_others", "expected_effect"):
         if not str(pb.get(k) or "").strip():
             raise ValueError(f"[rule:align_primary_bet_field] primary_bet.{k} required")
+    if _HEDGE_WORDS_RE.search(str(pb.get("action") or "")):
+        raise ValueError("[rule:align_primary_bet_hedge] primary_bet.action must not use hedging")
 
     imp = summary_data.get("impact_estimate")
     if not isinstance(imp, dict):
@@ -954,3 +1018,19 @@ def validate_executive_alignment(summary_data: dict) -> None:
         raise ValueError("[rule:summary_primary_strategy_key] primary_strategy.strategy required")
     if not str(ps.get("label") or "").strip():
         raise ValueError("[rule:summary_primary_strategy_label] primary_strategy.label required")
+
+    br = summary_data.get("boardroom_summary")
+    if not isinstance(br, dict):
+        raise ValueError("[rule:boardroom_shape] boardroom_summary must be an object")
+    slides = br.get("slides") or []
+    if len(slides) != 10:
+        raise ValueError(f"[rule:boardroom_slides] boardroom_summary must have 10 slides, got {len(slides)}")
+    for sl in slides:
+        if not isinstance(sl, dict):
+            raise ValueError("[rule:boardroom_slide_shape] each slide must be an object")
+        for k in ("title", "headline", "points"):
+            if k not in sl:
+                raise ValueError(f"[rule:boardroom_slide_keys] slide missing {k!r}")
+        pts = sl.get("points")
+        if not isinstance(pts, list) or len(pts) < 1:
+            raise ValueError("[rule:boardroom_slide_points] each slide needs at least one point")

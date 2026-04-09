@@ -12,6 +12,7 @@ from typing import Any
 
 from app.analyzer import REMEDIATION_DECISION_TYPES, classify_page
 from app.business_context import is_cross_domain
+from app.evidence_engine import build_decision_rationale, build_evidence_pack
 from app.priority_scoring import issue_priority_score
 from app.transformation_types import infer_transformation_type_for_cluster_row
 
@@ -350,31 +351,31 @@ def _cluster_decision_line(
     if cluster_key == "overlap_same_intent" and strategy == "differentiate":
         if urls:
             return (
-                "You should separate regional and role signals clearly: give each live URL a distinct "
+                "The correct move is to separate regional and role signals clearly: give each live URL a distinct "
                 "buyer job, then consolidate true duplicates inside each region so you do not repeat "
                 f"the same story twice. Start with: {', '.join(urls[:2])}."
             )
         return (
-            "You should separate regional and role signals, then consolidate duplicates within each "
+            "The correct move is to separate regional and role signals, then consolidate duplicates within each "
             "market so parallel URLs stop competing for the same decision."
         )
     if cluster_key == "structural_conflict":
         u0 = urls[0] if urls else "the canonical URL"
         rest = f", {urls[1]}" if len(urls) > 1 else ""
         return (
-            f"You should normalize technical duplicates with redirects or canonical rules so one route "
+            f"The correct move is to normalize technical duplicates with redirects or canonical rules so one route "
             f"wins—begin with {u0}{rest}."
         )
     if cluster_key == "thin_content_cluster":
         ex = ", ".join(urls[:3]) if urls else "those URLs"
         return (
-            f"You should expand proof, pricing context, and next steps on {ex} so each page earns its "
+            f"The correct move is to expand proof, pricing context, and next steps on {ex} so each page earns its "
             f"high-intent job."
         )
     if cluster_key == "internal_linking_gap":
         ex = ", ".join(urls[:3]) if urls else "those destinations"
         return (
-            f"You should add contextual internal links from related pages pointing to {ex} so priority "
+            f"The correct move is to add contextual internal links from related pages pointing to {ex} so priority "
             f"URLs collect attention."
         )
     return _decision_line_fn(tt, urls)
@@ -448,6 +449,9 @@ def consolidate_clusters(
 
         pl = str(payload.get("priority_level") or "medium")
 
+        evidence = build_evidence_pack(c, payload)
+        decision_rationale = build_decision_rationale(ck, tt, evidence, urls[:6], primary_strategy)
+
         insights.append(
             {
                 "cluster_key": ck,
@@ -465,6 +469,8 @@ def consolidate_clusters(
                 "priority_score": ps_f,
                 "priority_level": pl,
                 "recommended_action": decision,
+                "evidence": evidence,
+                "decision_rationale": decision_rationale,
             }
         )
 

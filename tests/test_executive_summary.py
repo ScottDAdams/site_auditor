@@ -86,7 +86,14 @@ class TestExecutiveTopIssues(unittest.TestCase):
         first = data["top_issues"][0]
         self.assertTrue(first.get("problem"))
         self.assertEqual(first.get("cluster_key"), "overlap_same_intent")
-        self.assertIn("you should", first["decision"].lower())
+        self.assertIn("the correct move", first["decision"].lower())
+        self.assertIn("evidence", first)
+        self.assertIn("decision_rationale", first)
+        ev = first.get("evidence") or {}
+        self.assertIsInstance(ev, dict)
+        self.assertTrue(ev.get("interpretation") or ev.get("shared_sections"))
+        self.assertGreater(len(first.get("decision_rationale") or ""), 40)
+        self.assertEqual(len(data["boardroom_summary"]["slides"]), 10)
         self.assertTrue(first["business_consequence"])
         self.assertTrue(data["primary_bet"]["action"])
         self.assertEqual(estimate_impact(data)["impact_level"] in ("High", "Medium", "Low"), True)
@@ -113,12 +120,12 @@ class TestExecutionPlanOrdering(unittest.TestCase):
             "top_issues": [
                 {
                     "transformation_type": "redirect",
-                    "recommended_action": "You should redirect X to Y",
+                    "recommended_action": "The correct move is to redirect X to Y",
                     "urls": ["https://y.com", "https://x.com"],
                 },
                 {
                     "transformation_type": "merge",
-                    "recommended_action": "You should merge A and B",
+                    "recommended_action": "The correct move is to merge A and B",
                     "urls": ["https://a.com", "https://b.com"],
                 },
             ]

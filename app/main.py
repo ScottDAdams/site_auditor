@@ -335,6 +335,28 @@ def download_technical_markdown(report_id: int):
     return _markdown_download_response(md, f"technical-report-{report_id}.md")
 
 
+@app.get("/reports/{report_id}/download/boardroom.json")
+def download_boardroom_json(report_id: int):
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+    es = snapshot.get("executive_summary_data") or {}
+    body = es.get("boardroom_summary") or {"slides": []}
+    safe = f"boardroom-brief-{report_id}.json"
+    return JSONResponse(
+        content=body,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @app.get("/scoring", response_class=HTMLResponse)
 def scoring_page(request: Request):
     from app.scoring.benchmarks import get_scoring_weights

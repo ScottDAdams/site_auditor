@@ -171,6 +171,26 @@ def build_executive_markdown(
                 lines.append("**Example URLs:**")
                 for u in urls[:8]:
                     lines.append(f"- `{_md_escape_inline(str(u))}`")
+            ev = iss.get("evidence") if isinstance(iss.get("evidence"), dict) else {}
+            if ev:
+                lines.append("")
+                sim = ev.get("similarity_score")
+                if sim is not None:
+                    try:
+                        lines.append(
+                            f"- **Similarity (crawl signal):** {int(round(float(sim) * 100))}%"
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                for s in (ev.get("shared_sections") or [])[:5]:
+                    lines.append(f"- **Shared section:** {_md_escape_inline(str(s))}")
+                interp = (ev.get("interpretation") or "").strip()
+                if interp:
+                    lines.append(f"- **Interpretation:** {_md_escape_inline(interp)}")
+            rat = (iss.get("decision_rationale") or "").strip()
+            if rat:
+                lines.append("")
+                lines.append(f"- **Why this is the correct move:** {_md_escape_inline(rat)}")
             lines.append("")
 
     plan = es.get("execution_plan") or []
@@ -266,6 +286,22 @@ def build_executive_markdown(
             _md_block_preserve_hashes(exec_text.strip()),
             "",
         ]
+
+    br = es.get("boardroom_summary") or {}
+    slides = br.get("slides") if isinstance(br, dict) else None
+    if isinstance(slides, list) and slides:
+        lines += ["---", "", "## Boardroom narrative (10 slides)", ""]
+        for i, sl in enumerate(slides, 1):
+            if not isinstance(sl, dict):
+                continue
+            lines.append(f"### Slide {i}: {_md_escape_inline(str(sl.get('title', '')))}")
+            lines.append("")
+            lines.append(f"**{_md_escape_inline(str(sl.get('headline', '')))}**")
+            lines.append("")
+            for pt in (sl.get("points") or [])[:8]:
+                if str(pt).strip():
+                    lines.append(f"- {_md_escape_inline(str(pt))}")
+            lines.append("")
 
     lines.append("")
     lines.append(f"*— End of executive report · id `{report_id}` —*")

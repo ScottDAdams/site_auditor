@@ -22,7 +22,7 @@ class TestReportMarkdownBuilders(unittest.TestCase):
                     "transformation_type": "differentiate",
                     "problem": "Many pages overlap.",
                     "impact": "Splits demand.",
-                    "decision": "You should separate roles.",
+                    "decision": "The correct move is to separate roles.",
                     "risk_if_ignored": "Keeps splitting.",
                     "outcome": "Clearer paths.",
                     "urls": ["https://a.com/x"],

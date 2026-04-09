@@ -52,7 +52,7 @@ class TestUIPhase6b(unittest.TestCase):
                         "paragraphs": [
                             "Your site splits focus across one key area. That caps how well you can be found and capture demand.",
                             "Fix the lead conflict before you add pages or paid reach. Otherwise you compound the split.",
-                            "Ignore this and you keep competing against yourself—paid acquisition replaces clarity you could fix in structure.",
+                            "Ignore this and you keep competing against yourself—paid acquisition replaces clarity that structure fixes directly.",
                         ]
                     },
                     "expected_outcome": {
@@ -115,6 +115,7 @@ class TestUIPhase6b(unittest.TestCase):
             self.assertIn(b"View full technical audit", r.content)
             self.assertIn(b"download/executive.md", r.content)
             self.assertIn(b"download/technical.md", r.content)
+            self.assertIn(b"download/boardroom.json", r.content)
             ex = self.client.get(f"/reports/{rid}/download/executive.md")
             self.assertEqual(ex.status_code, 200)
             self.assertIn("markdown", ex.headers.get("content-type", ""))
