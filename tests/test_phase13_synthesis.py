@@ -13,6 +13,7 @@ from app.main import app
 from app.reporting.executive_content import (
     executive_docx_path,
     executive_synthesized_md_path,
+    strategic_pov_path,
     validate_executive_content,
 )
 from app.reporting.report_builder import build_executive_docx
@@ -70,6 +71,13 @@ Delay means continued spend against competing URLs, slower experiment readouts, 
 Resolving overlap first should improve capture efficiency on priority journeys and align teams around a single narrative per buyer decision, consistent with the structural issues above.
 """
 
+_VALID_POV = {
+    "core_thesis": "The company fragments demand by operating multiple URLs for the same buyer decision.",
+    "mechanism": "Overlapping coverage and weak canonical ownership let teams optimize competing surfaces for one job-to-be-done.",
+    "consequence": "Conversion credit splinters and paid spend feeds pages that compete with each other.",
+    "priority_action": "Choose one primary page per major decision and merge or differentiate alternates explicitly.",
+}
+
 
 class TestSynthesisValidation(unittest.TestCase):
     def test_validate_rejects_not_provided(self):
@@ -101,6 +109,11 @@ class TestSynthesisValidation(unittest.TestCase):
         r = validate_executive_content(dup)
         self.assertFalse(r["ok"])
 
+    def test_validate_rejects_banned_filler(self):
+        bad = _SYNTH_OK + "\n\nThis highlights a problem in section eight."
+        r = validate_executive_content(bad)
+        self.assertFalse(r["ok"])
+
 
 @unittest.skipUnless(_docx_available(), "python-docx not installed")
 class TestBuildUsesSynthesisOnly(unittest.TestCase):
@@ -109,7 +122,8 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @patch("app.main.synthesize_executive_report", return_value=_SYNTH_OK)
-    def test_build_writes_synthesized_and_docx(self, _mock_syn):
+    @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
+    def test_build_writes_synthesized_and_docx(self, _mock_pov, _mock_syn):
         snap = json.dumps(
             {
                 "executive_report_md": "legacy md",
@@ -135,6 +149,7 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
         try:
             r = self.client.post(f"/reports/{rid}/build")
             self.assertEqual(r.status_code, 200, msg=r.content)
+            self.assertTrue(strategic_pov_path(rid).is_file())
             syn = executive_synthesized_md_path(rid)
             self.assertTrue(syn.is_file())
             self.assertNotIn("Not provided", syn.read_text(encoding="utf-8").lower())
@@ -160,7 +175,8 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
         "app.main.synthesize_executive_report",
         return_value="## Executive Summary\n\nShort.",
     )
-    def test_build_422_when_validation_fails(self, _mock_syn):
+    @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
+    def test_build_422_when_validation_fails(self, _mock_pov, _mock_syn):
         snap = json.dumps(
             {
                 "executive_report_md": "x",

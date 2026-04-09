@@ -74,7 +74,12 @@ from app.reporting.executive_content import (
     executive_docx_path,
     validate_executive_content,
 )
-from app.reporting.executive_synthesis import extract_metrics, synthesize_executive_report
+from app.reporting.executive_synthesis import (
+    build_evidence_digest,
+    derive_strategic_pov,
+    extract_metrics,
+    synthesize_executive_report,
+)
 from app.reporting.report_builder import build_executive_docx
 from app.report import generate_report
 from app.utils import canonicalize_url
@@ -444,7 +449,7 @@ def download_executive_docx(report_id: int):
 
 @app.post("/reports/{report_id}/build")
 def build_client_report(report_id: int):
-    """Phase 13: LLM synthesis → validate → render DOCX from synthesized Markdown only."""
+    """Phase 14: strategic POV → synthesis → validate → DOCX from synthesized Markdown only."""
     with SessionLocal() as db:
         row = db.get(AuditReport, report_id)
     if not row:
@@ -486,14 +491,38 @@ def build_client_report(report_id: int):
         boardroom_brief = {}
 
     metrics = extract_metrics(snapshot)
+    evidence_digest = build_evidence_digest(vp, boardroom_brief)
 
     try:
-        synthesized_md = synthesize_executive_report(
+        strategic_pov = derive_strategic_pov(
             executive_md,
             technical_md,
             boardroom_brief,
             vp,
             metrics,
+        )
+    except RuntimeError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "error",
+                "errors": [str(exc)],
+            },
+        )
+
+    out_dir = executive_docx_path(report_id).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pov_path = out_dir / "strategic_pov.json"
+    pov_path.write_text(
+        json.dumps(strategic_pov, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    try:
+        synthesized_md = synthesize_executive_report(
+            strategic_pov,
+            metrics,
+            evidence_digest,
         )
     except RuntimeError as exc:
         return JSONResponse(
@@ -514,8 +543,6 @@ def build_client_report(report_id: int):
             },
         )
 
-    out_dir = executive_docx_path(report_id).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
     syn_path = out_dir / "executive_synthesized.md"
     docx_path = out_dir / "executive.docx"
     syn_path.write_text(synthesized_md, encoding="utf-8")

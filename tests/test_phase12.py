@@ -65,6 +65,13 @@ Delay means continued spend against competing URLs, slower experiment readouts, 
 Resolving overlap first should improve capture efficiency on priority journeys and align teams around a single narrative per buyer decision, consistent with the structural issues above.
 """
 
+_VALID_POV = {
+    "core_thesis": "The company fragments demand by operating multiple URLs for the same buyer decision.",
+    "mechanism": "Overlapping coverage and weak canonical ownership let teams optimize competing surfaces for one job-to-be-done.",
+    "consequence": "Conversion credit splinters and paid spend feeds pages that compete with each other.",
+    "priority_action": "Choose one primary page per major decision and merge or differentiate alternates explicitly.",
+}
+
 
 class TestExecutiveContent(unittest.TestCase):
     def test_validate_rejects_not_provided(self):
@@ -84,7 +91,8 @@ class TestReportBuilderEndpoint(unittest.TestCase):
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @patch("app.main.synthesize_executive_report", return_value=_SYNTH_OK)
-    def test_docx_404_until_built(self, _mock_syn):
+    @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
+    def test_docx_404_until_built(self, _mock_pov, _mock_syn):
         snap = json.dumps(
             {
                 "executive_report_md": _SYNTH_OK,

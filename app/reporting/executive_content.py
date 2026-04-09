@@ -24,6 +24,10 @@ def executive_synthesized_md_path(report_id: int) -> Path:
     return _generated_dir(report_id) / "executive_synthesized.md"
 
 
+def strategic_pov_path(report_id: int) -> Path:
+    return _generated_dir(report_id) / "strategic_pov.json"
+
+
 REQUIRED_SECTION_TITLES = (
     "Executive Summary",
     "Audit Scorecard",
@@ -68,6 +72,13 @@ def validate_executive_content(md: str) -> dict[str, Any]:
     lower = (text or "").lower()
     if "not provided" in lower or "tbd" in lower:
         errors.append("Contains placeholder language (e.g. Not provided, TBD)")
+
+    _banned = re.compile(
+        r"\b(this highlights|it is important to|organizations should|it is worth noting)\b",
+        re.I,
+    )
+    if _banned.search(text or ""):
+        errors.append("Contains banned filler phrasing (e.g. this highlights, organizations should)")
 
     seen: set[str] = set()
     for t in titles:
