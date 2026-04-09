@@ -4,6 +4,11 @@
 
 {% block main %}
 <article class="report-technical-doc">
+  <div class="report-download-bar report-download-bar--technical" role="group" aria-label="Download reports">
+    <span class="report-download-bar__label">Download</span>
+    <a href="/reports/{{ report.id }}/download/executive.md" class="btn-download-md">Executive report (.md)</a>
+    <a href="/reports/{{ report.id }}/download/technical.md" class="btn-download-md">Technical report (.md)</a>
+  </div>
   <h1 class="report-technical-title">Technical audit</h1>
   <p class="report-technical-meta">{{ report.domains }}</p>
 

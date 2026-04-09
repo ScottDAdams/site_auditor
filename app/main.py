@@ -9,7 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -262,6 +268,71 @@ def report_technical(request: Request, report_id: int):
             "back_href": f"/reports/{report_id}",
         },
     )
+
+
+def _markdown_download_response(body: str, filename: str) -> Response:
+    safe = "".join(c for c in filename if c.isalnum() or c in "._-")
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@app.get("/reports/{report_id}/download/executive.md")
+def download_executive_markdown(report_id: int):
+    from app.report_downloads import build_executive_markdown
+
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+    es = snapshot.get("executive_summary_data") or {}
+    exec_text = snapshot.get("executive_summary_text") or ""
+    roadmap = snapshot.get("execution_roadmap") or {}
+    md = build_executive_markdown(
+        es,
+        domains=row.domains or "",
+        score=int(row.score or 0),
+        priority_level=row.priority_level or "medium",
+        report_id=report_id,
+        exec_text=exec_text,
+        roadmap=roadmap,
+        created_at=row.created_at,
+    )
+    return _markdown_download_response(md, f"executive-report-{report_id}.md")
+
+
+@app.get("/reports/{report_id}/download/technical.md")
+def download_technical_markdown(report_id: int):
+    from app.report_downloads import build_technical_markdown
+
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+    es = snapshot.get("executive_summary_data") or {}
+    md = build_technical_markdown(
+        row.report_html or "",
+        domains=row.domains or "",
+        score=int(row.score or 0),
+        priority_level=row.priority_level or "medium",
+        report_id=report_id,
+        es=es,
+        created_at=row.created_at,
+    )
+    return _markdown_download_response(md, f"technical-report-{report_id}.md")
 
 
 @app.get("/scoring", response_class=HTMLResponse)

@@ -11,3 +11,4 @@ python-dotenv
 playwright
 sqlalchemy>=2.0
 httpx
+markdownify>=0.12

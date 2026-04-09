@@ -276,6 +276,49 @@
   margin-bottom: 28px;
 }
 
+.report-download-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 1.5rem;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface, #fff);
+}
+
+.report-download-bar--technical {
+  margin-bottom: 1.75rem;
+}
+
+.report-download-bar__label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--app-muted);
+  margin-right: 4px;
+}
+
+.btn-download-md {
+  display: inline-block;
+  padding: 8px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--app-accent, #1d4ed8);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  text-decoration: none;
+  background: var(--app-bg, #fff);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-download-md:hover {
+  background: rgba(29, 78, 216, 0.06);
+  border-color: var(--app-accent, #1d4ed8);
+}
+
 .report-page-section {
   margin-bottom: 3.75rem;
 }

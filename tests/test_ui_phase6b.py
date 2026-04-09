@@ -113,10 +113,22 @@ class TestUIPhase6b(unittest.TestCase):
             self.assertIn(b"CEO summary", r.content)
             self.assertIn(b"Primary strategy", r.content)
             self.assertIn(b"View full technical audit", r.content)
+            self.assertIn(b"download/executive.md", r.content)
+            self.assertIn(b"download/technical.md", r.content)
+            ex = self.client.get(f"/reports/{rid}/download/executive.md")
+            self.assertEqual(ex.status_code, 200)
+            self.assertIn("markdown", ex.headers.get("content-type", ""))
+            self.assertIn(b"# Executive report", ex.content)
+            cd = ex.headers.get("content-disposition") or ""
+            self.assertIn("attachment", str(cd).lower())
+            tx = self.client.get(f"/reports/{rid}/download/technical.md")
+            self.assertEqual(tx.status_code, 200)
+            self.assertIn(b"# Technical audit", tx.content)
             tr = self.client.get(f"/reports/{rid}/technical")
             self.assertEqual(tr.status_code, 200)
             self.assertIn(b"Full technical output", tr.content)
             self.assertIn(b"Technical body", tr.content)
+            self.assertIn(b"download/technical.md", tr.content)
         finally:
             with SessionLocal() as db:
                 row = db.get(AuditReport, rid)

@@ -6,6 +6,12 @@
 {% block main %}
 {{ page_header("Audit report", report.domains) }}
 
+<div class="report-download-bar" role="group" aria-label="Download reports">
+  <span class="report-download-bar__label">Download</span>
+  <a href="/reports/{{ report.id }}/download/executive.md" class="btn-download-md">Executive report (.md)</a>
+  <a href="/reports/{{ report.id }}/download/technical.md" class="btn-download-md">Technical report (.md)</a>
+</div>
+
 <section class="section-block report-page-section">
   {% if es and es.primary_bet %}
   <h2 class="report-section-title report-section-title--primary">Primary decision</h2>
