@@ -1,4 +1,4 @@
-"""Phase 13: executive synthesis validation and DOCX from synthesized Markdown only."""
+"""Phase 13/15: executive validation and DOCX from synthesized Markdown."""
 
 import json
 import os
@@ -30,64 +30,54 @@ def _docx_available() -> bool:
 
 _SYNTH_OK = """## Executive Summary
 
-The dominant issue is structural overlap across buyer journeys. Multiple URLs compete for the same decision, which fragments demand and weakens conversion. The audit shows meaningful cluster concentration that should be resolved before scaling content production.
+The site keeps several live URLs answering the same buyer question, so teams split ownership and measurement before any campaign change can read clearly.
 
 ## Audit Scorecard
 
-Overlap intensity is elevated relative to a healthy site baseline, meaning paid and organic traffic may land on competing pages. Cluster count indicates several distinct duplication themes rather than one-off duplicates.
+Roughly four in ten crawled routes sit inside overlap clusters while paired pages mirror the same body story, which means the crawl repeats one narrative across multiple doors.
 
 ## If You Do One Thing
 
-Consolidate or differentiate the top overlapping cluster first. This must happen first because it removes the largest source of split demand before you invest in new pages or campaigns.
+Pick one canonical URL for the strongest overlap pair and merge or visibly separate the twin page before funding more net-new routes.
 
 ## What Is Breaking Performance
 
-### Theme one — Competing landing paths
-Problem: Two routes answer the same buyer question.
-Business impact: Conversion credit scatters and optimization becomes noisy.
-Action: Pick one primary URL and redirect or merge the alternate.
-Outcome: One owner per decision with clearer measurement.
-
-### Theme two — Thin differentiation
-Problem: Pages repeat the same narrative with minor variants.
-Business impact: Search and internal discovery dilute authority.
-Action: Merge redundant copy and strengthen one canonical narrative.
-Outcome: Stronger relevance signals and less crawl waste.
+Parallel paths carry near-identical copy for one job. Internal owners disagree on which surface should win. Paid and organic entries land in a fork. Experiments run on one URL while fixes ship on another, so lift never stacks.
 
 ## Growth Opportunities
 
-You can capture leverage by turning duplicated coverage into one authoritative page and using freed capacity for net-new intent gaps identified in the technical findings.
+Retiring redundant doors turns calendar time toward intents the crawl never covered because effort kept recycling the same pages under different addresses.
 
 ## 30-Day Execution Plan
 
-Week one: Inventory overlaps and lock canonical targets. Week two: Implement merges and redirects with analytics validation. Week three: Refresh internal links and sitemaps. Week four: Measure conversion and search visibility shifts.
+Week one maps overlaps and names keepers. Week two executes merges and redirects. Week three repairs internal links and sitemaps. Week four reads conversion only after the fork closes.
 
 ## Risks of Delay
 
-Delay means continued spend against competing URLs, slower experiment readouts, and harder attribution during seasonal demand.
+Extra weeks keep spend entering paired URLs and leave readouts noisy because the structural fork stays open.
 
 ## Expected Outcomes
 
-Resolving overlap first should improve capture efficiency on priority journeys and align teams around a single narrative per buyer decision, consistent with the structural issues above.
+One primary route per decision should restore clearer credit, calmer tests, and buyers meeting a single exhale instead of a tie between twins.
 """
 
 _VALID_POV = {
-    "core_thesis": "The company fragments demand by operating multiple URLs for the same buyer decision.",
-    "mechanism": "Overlapping coverage and weak canonical ownership let teams optimize competing surfaces for one job-to-be-done.",
-    "consequence": "Conversion credit splinters and paid spend feeds pages that compete with each other.",
-    "priority_action": "Choose one primary page per major decision and merge or differentiate alternates explicitly.",
+    "core_thesis": "The site runs duplicate pages for the same buyer decision without one clear owner.",
+    "mechanism": "Teams publish parallel URLs so search and ads land on competing surfaces.",
+    "consequence": "Conversion credit splinters and experiments contradict each other.",
+    "priority_action": "Pick one primary URL per major decision and merge or differentiate the rest.",
 }
 
 
 class TestSynthesisValidation(unittest.TestCase):
     def test_validate_rejects_not_provided(self):
-        bad = _SYNTH_OK.replace("dominant issue", "Not provided")
+        bad = _SYNTH_OK.replace("buyer question", "Not provided")
         r = validate_executive_content(bad)
         self.assertFalse(r["ok"])
 
     def test_validate_requires_sections(self):
-        short = "## Executive Summary\n\nToo short.\n\n" + "\n".join(
-            f"## {t}\n\n" + ("x " * 30) for t in (
+        short = "## Executive Summary\n\nToo short words here.\n\n" + "\n".join(
+            f"## {t}\n\n" + ("word " * 20) for t in (
                 "Audit Scorecard",
                 "If You Do One Thing",
                 "What Is Breaking Performance",
@@ -105,12 +95,28 @@ class TestSynthesisValidation(unittest.TestCase):
         self.assertTrue(r["ok"], msg=r.get("errors"))
 
     def test_duplicate_h2_fails(self):
-        dup = _SYNTH_OK + "\n## Executive Summary\n\nMore text " + "x " * 40
+        dup = _SYNTH_OK + "\n## Executive Summary\n\nMore padding " + "word " * 40
         r = validate_executive_content(dup)
         self.assertFalse(r["ok"])
 
     def test_validate_rejects_banned_filler(self):
-        bad = _SYNTH_OK + "\n\nThis highlights a problem in section eight."
+        bad = _SYNTH_OK.replace(
+            "instead of a tie between twins.",
+            "instead of a tie between twins. This highlights the failure mode.",
+        )
+        r = validate_executive_content(bad)
+        self.assertFalse(r["ok"])
+
+    def test_validate_rejects_banned_hype(self):
+        bad = _SYNTH_OK.replace("clearer credit", "a significant lift in credit")
+        r = validate_executive_content(bad)
+        self.assertFalse(r["ok"])
+
+    def test_validate_rejects_too_many_percent_metrics(self):
+        bad = _SYNTH_OK.replace(
+            "Roughly four in ten",
+            "At 40.0% overlap, 41.0% overlap, 42.0% overlap, and 43.0% overlap",
+        )
         r = validate_executive_content(bad)
         self.assertFalse(r["ok"])
 
@@ -121,13 +127,14 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
         self.client = TestClient(app)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @patch("app.main.synthesize_executive_report", return_value=_SYNTH_OK)
+    @patch("app.main.compress_report", side_effect=lambda x: x)
+    @patch("app.main.write_executive_report", return_value=_SYNTH_OK)
     @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
-    def test_build_writes_synthesized_and_docx(self, _mock_pov, _mock_syn):
+    def test_build_writes_artifacts_and_docx(self, _mock_pov, _mock_write, _mock_comp):
         snap = json.dumps(
             {
-                "executive_report_md": "legacy md",
-                "technical_report_md": "tech md",
+                "executive_report_md": "legacy",
+                "technical_report_md": "tech",
                 "verification_pack": {"cluster_proofs": []},
                 "executive_summary_data": {
                     "_metrics_snapshot": {"overlap_rate": 0.2},
@@ -152,7 +159,7 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
             self.assertTrue(strategic_pov_path(rid).is_file())
             syn = executive_synthesized_md_path(rid)
             self.assertTrue(syn.is_file())
-            self.assertNotIn("Not provided", syn.read_text(encoding="utf-8").lower())
+            self.assertNotIn("not provided", syn.read_text(encoding="utf-8").lower())
             p = executive_docx_path(rid)
             self.assertTrue(p.is_file())
         finally:
@@ -171,17 +178,19 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
                     pass
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @patch("app.main.compress_report", side_effect=lambda x: x)
     @patch(
-        "app.main.synthesize_executive_report",
-        return_value="## Executive Summary\n\nShort.",
+        "app.main.write_executive_report",
+        return_value="## Executive Summary\n\nToo few words.",
     )
     @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
-    def test_build_422_when_validation_fails(self, _mock_pov, _mock_syn):
+    def test_build_422_when_validation_fails(self, _mock_pov, _mock_write, _mock_comp):
         snap = json.dumps(
             {
                 "executive_report_md": "x",
                 "technical_report_md": "",
                 "executive_summary_data": {},
+                "verification_pack": {},
             }
         )
         with SessionLocal() as db:

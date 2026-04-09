@@ -1,4 +1,4 @@
-"""Phase 12/13: synthesized report validation and on-demand DOCX."""
+"""Phase 12/15: report build validation and on-demand DOCX."""
 
 import json
 import os
@@ -22,60 +22,51 @@ def _docx_available() -> bool:
         return False
 
 
+# Phase 15 validation: word caps, no hype words, few metric call-outs, 15+ words/section
 _SYNTH_OK = """## Executive Summary
 
-The dominant issue is structural overlap across buyer journeys. Multiple URLs compete for the same decision, which fragments demand and weakens conversion. The audit shows meaningful cluster concentration that should be resolved before scaling content production.
+The site keeps several live URLs answering the same buyer question, so teams split ownership and measurement before any campaign change can read clearly.
 
 ## Audit Scorecard
 
-Overlap intensity is elevated relative to a healthy site baseline, meaning paid and organic traffic may land on competing pages. Cluster count indicates several distinct duplication themes rather than one-off duplicates.
+Roughly four in ten crawled routes sit inside overlap clusters while paired pages mirror the same body story, which means the crawl repeats one narrative across multiple doors.
 
 ## If You Do One Thing
 
-Consolidate or differentiate the top overlapping cluster first. This must happen first because it removes the largest source of split demand before you invest in new pages or campaigns.
+Pick one canonical URL for the strongest overlap pair and merge or visibly separate the twin page before funding more net-new routes.
 
 ## What Is Breaking Performance
 
-### Theme one — Competing landing paths
-Problem: Two routes answer the same buyer question.
-Business impact: Conversion credit scatters and optimization becomes noisy.
-Action: Pick one primary URL and redirect or merge the alternate.
-Outcome: One owner per decision with clearer measurement.
-
-### Theme two — Thin differentiation
-Problem: Pages repeat the same narrative with minor variants.
-Business impact: Search and internal discovery dilute authority.
-Action: Merge redundant copy and strengthen one canonical narrative.
-Outcome: Stronger relevance signals and less crawl waste.
+Parallel paths carry near-identical copy for one job. Internal owners disagree on which surface should win. Paid and organic entries land in a fork. Experiments run on one URL while fixes ship on another, so lift never stacks.
 
 ## Growth Opportunities
 
-You can capture leverage by turning duplicated coverage into one authoritative page and using freed capacity for net-new intent gaps identified in the technical findings.
+Retiring redundant doors turns calendar time toward intents the crawl never covered because effort kept recycling the same pages under different addresses.
 
 ## 30-Day Execution Plan
 
-Week one: Inventory overlaps and lock canonical targets. Week two: Implement merges and redirects with analytics validation. Week three: Refresh internal links and sitemaps. Week four: Measure conversion and search visibility shifts.
+Week one maps overlaps and names keepers. Week two executes merges and redirects. Week three repairs internal links and sitemaps. Week four reads conversion only after the fork closes.
 
 ## Risks of Delay
 
-Delay means continued spend against competing URLs, slower experiment readouts, and harder attribution during seasonal demand.
+Extra weeks keep spend entering paired URLs and leave readouts noisy because the structural fork stays open.
 
 ## Expected Outcomes
 
-Resolving overlap first should improve capture efficiency on priority journeys and align teams around a single narrative per buyer decision, consistent with the structural issues above.
+One primary route per decision should restore clearer credit, calmer tests, and buyers meeting a single exhale instead of a tie between twins.
 """
 
 _VALID_POV = {
-    "core_thesis": "The company fragments demand by operating multiple URLs for the same buyer decision.",
-    "mechanism": "Overlapping coverage and weak canonical ownership let teams optimize competing surfaces for one job-to-be-done.",
-    "consequence": "Conversion credit splinters and paid spend feeds pages that compete with each other.",
-    "priority_action": "Choose one primary page per major decision and merge or differentiate alternates explicitly.",
+    "core_thesis": "The site runs duplicate pages for the same buyer decision without one clear owner.",
+    "mechanism": "Teams publish parallel URLs so search and ads land on competing surfaces.",
+    "consequence": "Conversion credit splinters and experiments contradict each other.",
+    "priority_action": "Pick one primary URL per major decision and merge or differentiate the rest.",
 }
 
 
 class TestExecutiveContent(unittest.TestCase):
     def test_validate_rejects_not_provided(self):
-        bad = _SYNTH_OK.replace("dominant issue", "Not provided")
+        bad = _SYNTH_OK.replace("buyer question", "Not provided")
         r = validate_executive_content(bad)
         self.assertFalse(r["ok"])
 
@@ -90,9 +81,10 @@ class TestReportBuilderEndpoint(unittest.TestCase):
         self.client = TestClient(app)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @patch("app.main.synthesize_executive_report", return_value=_SYNTH_OK)
+    @patch("app.main.compress_report", side_effect=lambda x: x)
+    @patch("app.main.write_executive_report", return_value=_SYNTH_OK)
     @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
-    def test_docx_404_until_built(self, _mock_pov, _mock_syn):
+    def test_docx_404_until_built(self, _mock_pov, _mock_write, _mock_comp):
         snap = json.dumps(
             {
                 "executive_report_md": _SYNTH_OK,

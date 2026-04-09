@@ -16,39 +16,35 @@ def _docx_available() -> bool:
 
 _MD = """## Executive Summary
 
-The dominant issue is structural overlap. Multiple URLs compete for the same decision, which fragments demand.
+The site keeps several live URLs answering the same buyer question, so teams split ownership and measurement before any campaign change can read clearly.
 
 ## Audit Scorecard
 
-Overlap intensity is elevated. Cluster count indicates several duplication themes.
+Roughly four in ten crawled routes sit inside overlap clusters while paired pages mirror the same body story, which means the crawl repeats one narrative across multiple doors.
 
 ## If You Do One Thing
 
-Consolidate the top overlapping cluster first because it removes the largest source of split demand.
+Pick one canonical URL for the strongest overlap pair and merge or visibly separate the twin page before funding more net-new routes.
 
 ## What Is Breaking Performance
 
-### Theme one
-Problem: Competing paths.
-Business impact: Credit scatters.
-Action: Pick one primary URL.
-Outcome: Clearer measurement.
+Parallel paths carry near-identical copy for one job. Internal owners disagree on which surface should win. Paid and organic entries land in a fork. Experiments run on one URL while fixes ship on another, so lift never stacks.
 
 ## Growth Opportunities
 
-Turn duplicated coverage into one authoritative page.
+Retiring redundant doors turns calendar time toward intents the crawl never covered because effort kept recycling the same pages under different addresses.
 
 ## 30-Day Execution Plan
 
-Week one: Inventory overlaps. Week two: Implement merges. Week three: Fix links. Week four: Measure.
+Week one maps overlaps and names keepers. Week two executes merges and redirects. Week three repairs internal links and sitemaps. Week four reads conversion only after the fork closes.
 
 ## Risks of Delay
 
-Continued spend against competing URLs and slower readouts.
+Extra weeks keep spend entering paired URLs and leave readouts noisy because the structural fork stays open.
 
 ## Expected Outcomes
 
-Improved capture efficiency on priority journeys.
+One primary route per decision should restore clearer credit, calmer tests, and buyers meeting a single exhale instead of a tie between twins.
 """
 
 

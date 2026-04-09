@@ -500,6 +500,7 @@ def build_executive_summary_data(payload: dict, insights: dict) -> dict[str, Any
         for k, v in {
             "overlap_rate": metrics.get("overlap_rate"),
             "avg_cluster_similarity": metrics.get("avg_cluster_similarity"),
+            "content_uniqueness_score": metrics.get("content_uniqueness_score"),
         }.items()
         if v is not None
     }

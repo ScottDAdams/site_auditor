@@ -70,16 +70,22 @@ from app.executive_summary import (
 from app.executive_narrative import generate_executive_narrative
 from app.report_downloads import build_technical_markdown
 from app.verification_pack import build_verification_pack
+from app.reporting.audit_signal import (
+    build_audit_signal,
+    load_audit_signal,
+    save_audit_signal_file,
+)
+from app.reporting.compression import compress_report
 from app.reporting.executive_content import (
     executive_docx_path,
     validate_executive_content,
 )
-from app.reporting.executive_synthesis import (
-    build_evidence_digest,
-    derive_strategic_pov,
-    extract_metrics,
-    synthesize_executive_report,
+from app.reporting.executive_pov import derive_strategic_pov
+from app.reporting.executive_writer import (
+    build_core_argument,
+    write_executive_report,
 )
+from app.reporting.evidence_selection import select_top_proof
 from app.reporting.report_builder import build_executive_docx
 from app.report import generate_report
 from app.utils import canonicalize_url
@@ -449,7 +455,7 @@ def download_executive_docx(report_id: int):
 
 @app.post("/reports/{report_id}/build")
 def build_client_report(report_id: int):
-    """Phase 14: strategic POV → synthesis → validate → DOCX from synthesized Markdown only."""
+    """Phase 15: audit_signal → POV → proof → writer → compress → validate → DOCX."""
     with SessionLocal() as db:
         row = db.get(AuditReport, report_id)
     if not row:
@@ -465,42 +471,14 @@ def build_client_report(report_id: int):
     if not isinstance(snapshot, dict):
         snapshot = {}
 
-    executive_md = str(snapshot.get("executive_report_md") or "").strip()
-    if not executive_md:
-        executive_md = str(snapshot.get("executive_summary_text") or "").strip()
-    if not executive_md:
-        return JSONResponse(
-            status_code=422,
-            content={
-                "status": "error",
-                "errors": ["No executive narrative markdown stored for this audit."],
-            },
-        )
+    audit_signal = load_audit_signal(snapshot)
 
-    technical_md = str(snapshot.get("technical_report_md") or "").strip()
-    es = snapshot.get("executive_summary_data") or {}
-    if not isinstance(es, dict):
-        es = {}
-
-    vp = snapshot.get("verification_pack")
-    if not isinstance(vp, dict):
-        vp = es.get("verification_pack") if isinstance(es.get("verification_pack"), dict) else {}
-
-    boardroom_brief = es.get("boardroom_summary")
-    if not isinstance(boardroom_brief, dict):
-        boardroom_brief = {}
-
-    metrics = extract_metrics(snapshot)
-    evidence_digest = build_evidence_digest(vp, boardroom_brief)
+    out_dir = executive_docx_path(report_id).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_audit_signal_file(report_id, audit_signal)
 
     try:
-        strategic_pov = derive_strategic_pov(
-            executive_md,
-            technical_md,
-            boardroom_brief,
-            vp,
-            metrics,
-        )
+        strategic_pov = derive_strategic_pov(audit_signal)
     except RuntimeError as exc:
         return JSONResponse(
             status_code=422,
@@ -510,20 +488,18 @@ def build_client_report(report_id: int):
             },
         )
 
-    out_dir = executive_docx_path(report_id).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
     pov_path = out_dir / "strategic_pov.json"
     pov_path.write_text(
         json.dumps(strategic_pov, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
+    proof = select_top_proof(audit_signal, strategic_pov)
+    core_argument = build_core_argument(strategic_pov)
+
     try:
-        synthesized_md = synthesize_executive_report(
-            strategic_pov,
-            metrics,
-            evidence_digest,
-        )
+        draft_md = write_executive_report(core_argument, proof)
+        synthesized_md = compress_report(draft_md)
     except RuntimeError as exc:
         return JSONResponse(
             status_code=422,
@@ -895,6 +871,13 @@ def _run_audit_job(site_list: list[str]) -> None:
             report_id=0,
             es=summary_data,
         )
+        audit_signal = build_audit_signal(
+            summary_data=summary_data,
+            verification_pack=verification_pack,
+            execution_roadmap=execution_roadmap,
+            ai_insights=ai_insights,
+            metrics=metrics,
+        )
         snapshot = {
             "executive_summary_data": summary_data,
             "executive_summary_text": exec_body_out,
@@ -902,6 +885,7 @@ def _run_audit_job(site_list: list[str]) -> None:
             "technical_report_md": technical_report_md,
             "execution_roadmap": execution_roadmap,
             "verification_pack": verification_pack,
+            "audit_signal": audit_signal,
         }
         summary_metrics = {
             "pages_crawled": str(len(pages)),

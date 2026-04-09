@@ -1,7 +1,5 @@
 """
-Phase 13: validation for synthesized executive Markdown only.
-
-No enrichment, padding, or section stitching. Source audit artifacts stay unchanged.
+Phase 13–15: validation for synthesized executive Markdown (strict).
 """
 
 from __future__ import annotations
@@ -39,6 +37,17 @@ REQUIRED_SECTION_TITLES = (
     "Expected Outcomes",
 )
 
+SECTION_WORD_LIMITS: dict[str, int] = {
+    "Executive Summary": 120,
+    "Audit Scorecard": 120,
+    "If You Do One Thing": 80,
+    "What Is Breaking Performance": 150,
+    "Growth Opportunities": 120,
+    "30-Day Execution Plan": 150,
+    "Risks of Delay": 100,
+    "Expected Outcomes": 100,
+}
+
 
 def _extract_h2_titles(md: str) -> list[str]:
     titles: list[str] = []
@@ -48,7 +57,6 @@ def _extract_h2_titles(md: str) -> list[str]:
 
 
 def _body_after_h2(md: str, title: str) -> str:
-    """Text from after ## title until next ## or EOF."""
     pattern = re.compile(
         rf"(?ms)^##\s+{re.escape(title)}\s*$(.*?)(?=^##\s+|\Z)"
     )
@@ -56,11 +64,32 @@ def _body_after_h2(md: str, title: str) -> str:
     return (m.group(1) or "").strip() if m else ""
 
 
+def _word_count(s: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9']+", s or ""))
+
+
+def _metric_mention_count(text: str) -> int:
+    n = len(re.findall(r"\d+(?:\.\d+)?\s*%", text))
+    n += len(re.findall(r"\b\d+(?:\.\d+)?\s+percent\b", text, re.I))
+    return n
+
+
+def _has_duplicate_sentences(text: str) -> bool:
+    parts = re.split(r"(?<=[.!?])\s+", text or "")
+    seen: set[str] = set()
+    for p in parts:
+        t = re.sub(r"\s+", " ", p.strip().lower())
+        if len(t) < 35:
+            continue
+        if t in seen:
+            return True
+        seen.add(t)
+    return False
+
+
 def validate_executive_content(md: str) -> dict[str, Any]:
     """
-    Validate synthesized executive report Markdown.
-
-    Requires eight ## sections (exact titles), non-empty bodies, no placeholder filler.
+    Validate Phase 15 compressed executive report: sections, word caps, bans, proof density.
     """
     text = (md or "").strip()
     if not text:
@@ -69,16 +98,29 @@ def validate_executive_content(md: str) -> dict[str, Any]:
     titles = _extract_h2_titles(text)
     errors: list[str] = []
 
-    lower = (text or "").lower()
+    lower = text.lower()
     if "not provided" in lower or "tbd" in lower:
         errors.append("Contains placeholder language (e.g. Not provided, TBD)")
 
-    _banned = re.compile(
+    _vague = re.compile(
         r"\b(this highlights|it is important to|organizations should|it is worth noting)\b",
         re.I,
     )
-    if _banned.search(text or ""):
-        errors.append("Contains banned filler phrasing (e.g. this highlights, organizations should)")
+    if _vague.search(text):
+        errors.append("Contains vague filler phrasing")
+
+    _banned_words = re.compile(
+        r"\b(significant|critical|important|key|strategic|opportunity|misalignment)\b",
+        re.I,
+    )
+    if _banned_words.search(text):
+        errors.append("Contains banned hype words (e.g. significant, strategic, opportunity)")
+
+    if _metric_mention_count(text) > 3:
+        errors.append("Too many metric call-outs (max 3 percentage-style mentions)")
+
+    if _has_duplicate_sentences(text):
+        errors.append("Contains repeated sentences")
 
     seen: set[str] = set()
     for t in titles:
@@ -91,7 +133,11 @@ def validate_executive_content(md: str) -> dict[str, Any]:
             errors.append(f"Missing required section: ## {req}")
         else:
             body = _body_after_h2(text, req)
-            if len(body) < 40:
-                errors.append(f"Section too short or empty: ## {req}")
+            wc = _word_count(body)
+            if wc < 15:
+                errors.append(f"Section too thin: ## {req}")
+            lim = SECTION_WORD_LIMITS.get(req)
+            if lim is not None and wc > lim:
+                errors.append(f"Section exceeds {lim} words: ## {req} ({wc} words)")
 
     return {"ok": len(errors) == 0, "errors": errors}
