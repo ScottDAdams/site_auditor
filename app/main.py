@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -70,6 +71,7 @@ from app.executive_summary import (
 from app.executive_narrative import generate_executive_narrative
 from app.report_downloads import build_technical_markdown
 from app.verification_pack import build_verification_pack
+from app.reporting.report_builder import build_executive_docx
 from app.report import generate_report
 from app.utils import canonicalize_url
 from sqlalchemy import select
@@ -379,6 +381,45 @@ def download_verification_json(report_id: int):
     safe = f"verification-pack-{report_id}.json"
     return JSONResponse(
         content=body or {"cluster_proofs": []},
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@app.get("/reports/{report_id}/download/executive.docx")
+def download_executive_docx(report_id: int):
+    with SessionLocal() as db:
+        row = db.get(AuditReport, report_id)
+    if not row:
+        return RedirectResponse(url="/reports", status_code=302)
+    try:
+        snapshot = json.loads(row.snapshot_json or "{}")
+    except json.JSONDecodeError:
+        snapshot = {}
+
+    executive_md = str(snapshot.get("executive_report_md") or "").strip()
+    if not executive_md:
+        executive_md = str(snapshot.get("executive_summary_text") or "").strip()
+    technical_md = str(snapshot.get("technical_report_md") or "").strip()
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        md_path = td_path / "executive_report.md"
+        out_path = td_path / "executive_report_final.docx"
+        md_path.write_text(executive_md, encoding="utf-8")
+        if technical_md:
+            (td_path / "technical_report.md").write_text(technical_md, encoding="utf-8")
+        build_executive_docx(str(md_path), str(out_path))
+        body = out_path.read_bytes()
+
+    safe = f"executive-report-{report_id}.docx"
+    return Response(
+        content=body,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
         headers={
             "Content-Disposition": f'attachment; filename="{safe}"',
             "Cache-Control": "private, no-store",

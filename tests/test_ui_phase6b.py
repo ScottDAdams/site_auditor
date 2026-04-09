@@ -114,6 +114,7 @@ class TestUIPhase6b(unittest.TestCase):
             self.assertIn(b"Primary strategy", r.content)
             self.assertIn(b"View full technical audit", r.content)
             self.assertIn(b"download/executive.md", r.content)
+            self.assertIn(b"download/executive.docx", r.content)
             self.assertIn(b"download/technical.md", r.content)
             self.assertIn(b"download/boardroom.json", r.content)
             self.assertIn(b"download/verification.json", r.content)

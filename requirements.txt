@@ -12,3 +12,4 @@ playwright
 sqlalchemy>=2.0
 httpx
 markdownify>=0.12
+python-docx
