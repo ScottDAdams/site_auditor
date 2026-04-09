@@ -26,6 +26,8 @@ class TestUIPhase6b(unittest.TestCase):
         self.assertIn(b"app-shell", r.content)
         self.assertIn(b"Site Auditor", r.content)
         self.assertIn(b"/reports", r.content)
+        self.assertIn(b"/reports/builder", r.content)
+        self.assertIn(b"Audit Summaries", r.content)
         self.assertIn(b"/rules", r.content)
 
     def test_rules_page_loads_in_shell(self):
@@ -42,7 +44,13 @@ class TestUIPhase6b(unittest.TestCase):
     def test_reports_index_loads(self):
         r = self.client.get("/reports")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(b"Reports", r.content)
+        self.assertIn(b"Audit Summaries", r.content)
+
+    def test_report_builder_page_loads(self):
+        r = self.client.get("/reports/builder")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"Report Builder", r.content)
+        self.assertIn(b"Build Report", r.content)
 
     def test_report_detail_executive_and_technical_section(self):
         snap = json.dumps(
@@ -115,6 +123,8 @@ class TestUIPhase6b(unittest.TestCase):
             self.assertIn(b"View full technical audit", r.content)
             self.assertIn(b"download/executive.md", r.content)
             self.assertIn(b"download/executive.docx", r.content)
+            dx = self.client.get(f"/reports/{rid}/download/executive.docx")
+            self.assertEqual(dx.status_code, 404)
             self.assertIn(b"download/technical.md", r.content)
             self.assertIn(b"download/boardroom.json", r.content)
             self.assertIn(b"download/verification.json", r.content)

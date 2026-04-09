@@ -1,0 +1,87 @@
+{% extends "layouts/app_shell.html" %}
+{% from "components/ui_macros.html" import page_header, priority_badge %}
+
+{% block title %}Report Builder{% endblock %}
+
+{% block main %}
+{{ page_header("Report Builder", "Generate client-ready Word reports from completed audits. Audits only store source Markdown and JSON.") }}
+
+{% if rows %}
+<table class="reports-table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>When</th>
+      <th>Sites</th>
+      <th>Score</th>
+      <th>Priority</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr id="row-{{ r.id }}">
+      <td><code>{{ r.id }}</code></td>
+      <td>{{ r.created_display }}</td>
+      <td>{{ r.domains }}</td>
+      <td><strong>{{ r.score }}</strong></td>
+      <td>{{ priority_badge(r.priority_level or 'medium') }}</td>
+      <td>
+        <button type="button" class="btn-download-md js-build-report" data-report-id="{{ r.id }}">Build Report</button>
+        {% if r.has_docx %}
+        <a href="/reports/{{ r.id }}/download/executive.docx" class="btn-download-md">Download .docx</a>
+        {% endif %}
+        <span class="card__muted js-build-status" id="status-{{ r.id }}" aria-live="polite"></span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card">
+  <p class="card__muted">No audits yet. Run one from <a href="/audit">Run Audit</a>, then return here.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll(".js-build-report").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var id = btn.getAttribute("data-report-id");
+      var st = document.getElementById("status-" + id);
+      if (st) { st.textContent = "Building…"; }
+      btn.disabled = true;
+      fetch("/reports/" + id + "/build", { method: "POST", credentials: "same-origin" })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+        .then(function (res) {
+          if (!res.ok) {
+            var err = (res.body && res.body.errors) ? res.body.errors.join(" ") : (res.body && res.body.message) || "Build failed";
+            if (st) { st.textContent = "Error: " + err; }
+            btn.disabled = false;
+            return;
+          }
+          if (st) { st.textContent = "Ready."; }
+          var row = document.getElementById("row-" + id);
+          if (row && res.body && res.body.download_url) {
+            var href = res.body.download_url;
+            if (!row.querySelector('a[href="' + href + '"]')) {
+              var a = document.createElement("a");
+              a.href = href;
+              a.className = "btn-download-md";
+              a.textContent = "Download .docx";
+              btn.parentNode.insertBefore(a, btn.nextSibling);
+            }
+          }
+          btn.disabled = false;
+        })
+        .catch(function () {
+          if (st) { st.textContent = "Request failed."; }
+          btn.disabled = false;
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}

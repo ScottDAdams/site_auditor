@@ -1,10 +1,10 @@
 {% extends "layouts/app_shell.html" %}
 {% from "components/ui_macros.html" import page_header, priority_badge, transformation_badge %}
 
-{% block title %}Report{% endblock %}
+{% block title %}Audit summary{% endblock %}
 
 {% block main %}
-{{ page_header("Audit report", report.domains) }}
+{{ page_header("Audit summary", report.domains) }}
 
 <div class="report-download-bar" role="group" aria-label="Download reports">
   <span class="report-download-bar__label">Download</span>
@@ -14,6 +14,7 @@
   <a href="/reports/{{ report.id }}/download/boardroom.json" class="btn-download-md">Executive brief (.json)</a>
   <a href="/reports/{{ report.id }}/download/verification.json" class="btn-download-md">Verification pack (.json)</a>
 </div>
+<p class="card__muted report-narrow-muted">Word report (.docx) is produced in <a href="/reports/builder">Reports</a> after you click Build Report. Download returns an error until it is built.</p>
 
 <section class="section-block report-page-section">
   {% if es and es.primary_bet %}
@@ -256,5 +257,5 @@
 </section>
 {% endif %}
 
-<p class="report-back-link"><a href="/reports">← All reports</a></p>
+<p class="report-back-link"><a href="/reports">← Audit summaries</a></p>
 {% endblock %}

@@ -1,7 +1,6 @@
 import json
 import os
 import threading
-import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -71,6 +70,11 @@ from app.executive_summary import (
 from app.executive_narrative import generate_executive_narrative
 from app.report_downloads import build_technical_markdown
 from app.verification_pack import build_verification_pack
+from app.reporting.executive_content import (
+    enrich_executive_content,
+    executive_docx_path,
+    validate_executive_content,
+)
 from app.reporting.report_builder import build_executive_docx
 from app.report import generate_report
 from app.utils import canonicalize_url
@@ -215,8 +219,39 @@ def reports_index(request: Request):
         "pages/reports_index.html",
         {
             "request": request,
-            "nav_active": "reports",
-            "title": "Reports",
+            "nav_active": "audit_summaries",
+            "title": "Audit Summaries",
+            "rows": display_rows,
+        },
+    )
+
+
+@app.get("/reports/builder", response_class=HTMLResponse)
+def report_builder_page(request: Request):
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(AuditReport).order_by(AuditReport.created_at.desc()).limit(100)
+        ).all()
+    display_rows = []
+    for r in rows:
+        p = executive_docx_path(r.id)
+        display_rows.append(
+            {
+                "id": r.id,
+                "domains": (r.domains[:96] + "…") if len(r.domains) > 96 else r.domains,
+                "score": r.score,
+                "priority_level": r.priority_level or "medium",
+                "created_display": r.created_at.strftime("%Y-%m-%d %H:%M UTC"),
+                "has_docx": p.is_file(),
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "pages/report_builder.html",
+        {
+            "request": request,
+            "nav_active": "report_builder",
+            "title": "Report Builder",
             "rows": display_rows,
         },
     )
@@ -237,8 +272,8 @@ def report_detail(request: Request, report_id: int):
         "pages/report_detail.html",
         {
             "request": request,
-            "nav_active": "reports",
-            "title": "Report",
+            "nav_active": "audit_summaries",
+            "title": "Audit summary",
             "report": row,
             "report_html": row.report_html,
             "es": snapshot.get("executive_summary_data") or {},
@@ -390,40 +425,96 @@ def download_verification_json(report_id: int):
 
 @app.get("/reports/{report_id}/download/executive.docx")
 def download_executive_docx(report_id: int):
+    path = executive_docx_path(report_id)
+    if not path.is_file():
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Report not built yet", "message": "Report not built yet"},
+        )
+    safe = f"executive-report-{report_id}.docx"
+    return FileResponse(
+        path=str(path),
+        filename=safe,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@app.post("/reports/{report_id}/build")
+def build_client_report(report_id: int):
+    """Phase 12: validate, enrich, render DOCX; audit pipeline does not build DOCX."""
     with SessionLocal() as db:
         row = db.get(AuditReport, report_id)
     if not row:
-        return RedirectResponse(url="/reports", status_code=302)
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "errors": ["Audit not found."]},
+        )
     try:
         snapshot = json.loads(row.snapshot_json or "{}")
     except json.JSONDecodeError:
         snapshot = {}
 
-    executive_md = str(snapshot.get("executive_report_md") or "").strip()
-    if not executive_md:
-        executive_md = str(snapshot.get("executive_summary_text") or "").strip()
-    technical_md = str(snapshot.get("technical_report_md") or "").strip()
+    raw_md = str(snapshot.get("executive_report_md") or "").strip()
+    if not raw_md:
+        raw_md = str(snapshot.get("executive_summary_text") or "").strip()
+    if not raw_md:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "error",
+                "errors": ["No executive narrative markdown stored for this audit."],
+            },
+        )
 
-    with tempfile.TemporaryDirectory() as td:
-        td_path = Path(td)
-        md_path = td_path / "executive_report.md"
-        out_path = td_path / "executive_report_final.docx"
-        md_path.write_text(executive_md, encoding="utf-8")
-        if technical_md:
-            (td_path / "technical_report.md").write_text(technical_md, encoding="utf-8")
-        build_executive_docx(str(md_path), str(out_path))
-        body = out_path.read_bytes()
+    tech_snap = str(snapshot.get("technical_report_md") or "").strip()
+    es = snapshot.get("executive_summary_data") or {}
+    if not isinstance(es, dict):
+        es = {}
 
-    safe = f"executive-report-{report_id}.docx"
-    return Response(
-        content=body,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe}"',
-            "Cache-Control": "private, no-store",
-        },
+    vp = snapshot.get("verification_pack")
+    if not isinstance(vp, dict):
+        vp = es.get("verification_pack") if isinstance(es.get("verification_pack"), dict) else {}
+
+    boardroom = es.get("boardroom_summary")
+    if not isinstance(boardroom, dict):
+        boardroom = None
+
+    metrics: dict = {}
+    ms = es.get("_metrics_snapshot") or {}
+    if isinstance(ms, dict):
+        metrics.update(ms)
+    if isinstance(vp.get("cluster_proofs"), list):
+        metrics.setdefault("cluster_count", len(vp["cluster_proofs"]))
+
+    enriched_md, tech_appendix = enrich_executive_content(
+        raw_md, vp, boardroom, metrics
+    )
+    technical_final = tech_appendix if tech_appendix.strip() else tech_snap
+
+    val = validate_executive_content(enriched_md)
+    if not val.get("ok"):
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "errors": val.get("errors") or ["Validation failed."]},
+        )
+
+    out_dir = executive_docx_path(report_id).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / "executive_report.md"
+    tech_path = out_dir / "technical_report.md"
+    docx_path = out_dir / "executive.docx"
+    md_path.write_text(enriched_md, encoding="utf-8")
+    tech_path.write_text(technical_final, encoding="utf-8")
+    build_executive_docx(str(md_path), str(docx_path))
+
+    return JSONResponse(
+        {
+            "status": "success",
+            "download_url": f"/reports/{report_id}/download/executive.docx",
+        }
     )
 
 

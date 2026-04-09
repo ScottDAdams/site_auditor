@@ -1,10 +1,10 @@
 {% extends "layouts/app_shell.html" %}
 {% from "components/ui_macros.html" import page_header, priority_badge %}
 
-{% block title %}Reports{% endblock %}
+{% block title %}Audit Summaries{% endblock %}
 
 {% block main %}
-{{ page_header("Reports", "Past audits with health score and priority. Open any row for the full brief.") }}
+{{ page_header("Audit Summaries", "Raw audit outputs: open any row for the brief and downloads (Markdown and JSON). Build the Word deliverable from Reports.") }}
 
 {% if rows %}
 <table class="reports-table">
@@ -24,7 +24,7 @@
       <td>{{ r.domains }}</td>
       <td><strong>{{ r.score }}</strong></td>
       <td>{{ priority_badge(r.priority_level or 'medium') }}</td>
-      <td><a href="/reports/{{ r.id }}">View report</a></td>
+      <td><a href="/reports/{{ r.id }}">View summary</a></td>
     </tr>
     {% endfor %}
   </tbody>

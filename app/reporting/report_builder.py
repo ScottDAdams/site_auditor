@@ -31,6 +31,11 @@ def _norm_heading(line: str) -> str:
     return x
 
 
+def parse_executive_markdown_sections(md: str) -> dict[str, list[str]]:
+    """Public wrapper for section parsing (Phase 12 validation)."""
+    return _parse_sections(md)
+
+
 def _parse_sections(md: str) -> dict[str, list[str]]:
     mapping = {
         "executive summary": "executive_summary",
