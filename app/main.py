@@ -71,10 +71,10 @@ from app.executive_narrative import generate_executive_narrative
 from app.report_downloads import build_technical_markdown
 from app.verification_pack import build_verification_pack
 from app.reporting.executive_content import (
-    enrich_executive_content,
     executive_docx_path,
     validate_executive_content,
 )
+from app.reporting.executive_synthesis import extract_metrics, synthesize_executive_report
 from app.reporting.report_builder import build_executive_docx
 from app.report import generate_report
 from app.utils import canonicalize_url
@@ -444,7 +444,7 @@ def download_executive_docx(report_id: int):
 
 @app.post("/reports/{report_id}/build")
 def build_client_report(report_id: int):
-    """Phase 12: validate, enrich, render DOCX; audit pipeline does not build DOCX."""
+    """Phase 13: LLM synthesis → validate → render DOCX from synthesized Markdown only."""
     with SessionLocal() as db:
         row = db.get(AuditReport, report_id)
     if not row:
@@ -457,10 +457,13 @@ def build_client_report(report_id: int):
     except json.JSONDecodeError:
         snapshot = {}
 
-    raw_md = str(snapshot.get("executive_report_md") or "").strip()
-    if not raw_md:
-        raw_md = str(snapshot.get("executive_summary_text") or "").strip()
-    if not raw_md:
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+
+    executive_md = str(snapshot.get("executive_report_md") or "").strip()
+    if not executive_md:
+        executive_md = str(snapshot.get("executive_summary_text") or "").strip()
+    if not executive_md:
         return JSONResponse(
             status_code=422,
             content={
@@ -469,7 +472,7 @@ def build_client_report(report_id: int):
             },
         )
 
-    tech_snap = str(snapshot.get("technical_report_md") or "").strip()
+    technical_md = str(snapshot.get("technical_report_md") or "").strip()
     es = snapshot.get("executive_summary_data") or {}
     if not isinstance(es, dict):
         es = {}
@@ -478,37 +481,45 @@ def build_client_report(report_id: int):
     if not isinstance(vp, dict):
         vp = es.get("verification_pack") if isinstance(es.get("verification_pack"), dict) else {}
 
-    boardroom = es.get("boardroom_summary")
-    if not isinstance(boardroom, dict):
-        boardroom = None
+    boardroom_brief = es.get("boardroom_summary")
+    if not isinstance(boardroom_brief, dict):
+        boardroom_brief = {}
 
-    metrics: dict = {}
-    ms = es.get("_metrics_snapshot") or {}
-    if isinstance(ms, dict):
-        metrics.update(ms)
-    if isinstance(vp.get("cluster_proofs"), list):
-        metrics.setdefault("cluster_count", len(vp["cluster_proofs"]))
+    metrics = extract_metrics(snapshot)
 
-    enriched_md, tech_appendix = enrich_executive_content(
-        raw_md, vp, boardroom, metrics
-    )
-    technical_final = tech_appendix if tech_appendix.strip() else tech_snap
+    try:
+        synthesized_md = synthesize_executive_report(
+            executive_md,
+            technical_md,
+            boardroom_brief,
+            vp,
+            metrics,
+        )
+    except RuntimeError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "error",
+                "errors": [str(exc)],
+            },
+        )
 
-    val = validate_executive_content(enriched_md)
+    val = validate_executive_content(synthesized_md)
     if not val.get("ok"):
         return JSONResponse(
             status_code=422,
-            content={"status": "error", "errors": val.get("errors") or ["Validation failed."]},
+            content={
+                "status": "error",
+                "errors": val.get("errors") or ["Validation failed."],
+            },
         )
 
     out_dir = executive_docx_path(report_id).parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    md_path = out_dir / "executive_report.md"
-    tech_path = out_dir / "technical_report.md"
+    syn_path = out_dir / "executive_synthesized.md"
     docx_path = out_dir / "executive.docx"
-    md_path.write_text(enriched_md, encoding="utf-8")
-    tech_path.write_text(technical_final, encoding="utf-8")
-    build_executive_docx(str(md_path), str(docx_path))
+    syn_path.write_text(synthesized_md, encoding="utf-8")
+    build_executive_docx(str(syn_path), str(docx_path))
 
     return JSONResponse(
         {

@@ -14,54 +14,52 @@ def _docx_available() -> bool:
         return False
 
 
+_MD = """## Executive Summary
+
+The dominant issue is structural overlap. Multiple URLs compete for the same decision, which fragments demand.
+
+## Audit Scorecard
+
+Overlap intensity is elevated. Cluster count indicates several duplication themes.
+
+## If You Do One Thing
+
+Consolidate the top overlapping cluster first because it removes the largest source of split demand.
+
+## What Is Breaking Performance
+
+### Theme one
+Problem: Competing paths.
+Business impact: Credit scatters.
+Action: Pick one primary URL.
+Outcome: Clearer measurement.
+
+## Growth Opportunities
+
+Turn duplicated coverage into one authoritative page.
+
+## 30-Day Execution Plan
+
+Week one: Inventory overlaps. Week two: Implement merges. Week three: Fix links. Week four: Measure.
+
+## Risks of Delay
+
+Continued spend against competing URLs and slower readouts.
+
+## Expected Outcomes
+
+Improved capture efficiency on priority journeys.
+"""
+
+
 @unittest.skipUnless(_docx_available(), "python-docx not installed")
 class TestReportBuilder(unittest.TestCase):
     def test_build_executive_docx_creates_file(self):
-        md = """01 Executive Summary
-Core Problem: Pages overlap and split demand.
-Primary Action: The correct move is to consolidate duplicate pages.
-Business Impact: Conversion is suppressed by mixed page ownership.
-
-02 What Is Breaking Performance
-01 — Duplicate Product Pages
-Problem: Two pages serve the same decision.
-Business Impact: Demand splits across competing URLs.
-Action: Consolidate and redirect.
-On Success: One page captures demand.
-
-03 If You Do One Thing
-PRIMARY ACTION: Consolidate duplicate pages.
-WHY THIS FIRST: This is the highest leverage blocker.
-EXPECTED RESULT: Clear ownership and stronger conversion flow.
-
-04 Execution Plan
-Week 1: Lock canonical ownership.
-Week 2: Merge and redirect.
-Week 3: Validate internal links.
-Week 4: Review impact.
-
-05 Risks of Inaction
-- Ongoing demand leakage.
-- Wasted paid spend.
-
-06 Expected Outcomes
-- Higher conversion capture.
-- Stronger authority.
-"""
-        technical = """Cluster: Overlap 1
-URLs:
-https://a.com/x
-https://a.com/y
-Example: NZ and AU pages repeat the same coverage explanation.
-Interpretation: Structure is effectively identical.
-"""
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
-            md_path = tdp / "executive_report.md"
-            out_path = tdp / "executive_report_final.docx"
-            tech_path = tdp / "technical_report.md"
-            md_path.write_text(md, encoding="utf-8")
-            tech_path.write_text(technical, encoding="utf-8")
+            md_path = tdp / "executive_synthesized.md"
+            out_path = tdp / "executive.docx"
+            md_path.write_text(_MD, encoding="utf-8")
 
             build_executive_docx(str(md_path), str(out_path))
             self.assertTrue(out_path.exists())
@@ -70,4 +68,3 @@ Interpretation: Structure is effectively identical.
 
 if __name__ == "__main__":
     unittest.main()
-

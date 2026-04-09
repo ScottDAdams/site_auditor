@@ -1,4 +1,4 @@
-"""Phase 12/13: synthesized report validation and on-demand DOCX."""
+"""Phase 13: executive synthesis validation and DOCX from synthesized Markdown only."""
 
 import json
 import os
@@ -10,7 +10,12 @@ from fastapi.testclient import TestClient
 from app.db.models import AuditReport
 from app.db.session import SessionLocal
 from app.main import app
-from app.reporting.executive_content import executive_docx_path, validate_executive_content
+from app.reporting.executive_content import (
+    executive_docx_path,
+    executive_synthesized_md_path,
+    validate_executive_content,
+)
+from app.reporting.report_builder import build_executive_docx
 
 
 def _docx_available() -> bool:
@@ -66,29 +71,49 @@ Resolving overlap first should improve capture efficiency on priority journeys a
 """
 
 
-class TestExecutiveContent(unittest.TestCase):
+class TestSynthesisValidation(unittest.TestCase):
     def test_validate_rejects_not_provided(self):
         bad = _SYNTH_OK.replace("dominant issue", "Not provided")
         r = validate_executive_content(bad)
         self.assertFalse(r["ok"])
 
-    def test_validate_ok_synthesized_shape(self):
-        v = validate_executive_content(_SYNTH_OK)
-        self.assertTrue(v["ok"], msg=v.get("errors"))
+    def test_validate_requires_sections(self):
+        short = "## Executive Summary\n\nToo short.\n\n" + "\n".join(
+            f"## {t}\n\n" + ("x " * 30) for t in (
+                "Audit Scorecard",
+                "If You Do One Thing",
+                "What Is Breaking Performance",
+                "Growth Opportunities",
+                "30-Day Execution Plan",
+                "Risks of Delay",
+                "Expected Outcomes",
+            )
+        )
+        r = validate_executive_content(short)
+        self.assertFalse(r["ok"])
+
+    def test_validate_ok_full_doc(self):
+        r = validate_executive_content(_SYNTH_OK)
+        self.assertTrue(r["ok"], msg=r.get("errors"))
+
+    def test_duplicate_h2_fails(self):
+        dup = _SYNTH_OK + "\n## Executive Summary\n\nMore text " + "x " * 40
+        r = validate_executive_content(dup)
+        self.assertFalse(r["ok"])
 
 
 @unittest.skipUnless(_docx_available(), "python-docx not installed")
-class TestReportBuilderEndpoint(unittest.TestCase):
+class TestBuildUsesSynthesisOnly(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @patch("app.main.synthesize_executive_report", return_value=_SYNTH_OK)
-    def test_docx_404_until_built(self, _mock_syn):
+    def test_build_writes_synthesized_and_docx(self, _mock_syn):
         snap = json.dumps(
             {
-                "executive_report_md": _SYNTH_OK,
-                "technical_report_md": "",
+                "executive_report_md": "legacy md",
+                "technical_report_md": "tech md",
                 "verification_pack": {"cluster_proofs": []},
                 "executive_summary_data": {
                     "_metrics_snapshot": {"overlap_rate": 0.2},
@@ -108,35 +133,78 @@ class TestReportBuilderEndpoint(unittest.TestCase):
             db.commit()
             rid = ar.id
         try:
-            r = self.client.get(f"/reports/{rid}/download/executive.docx")
-            self.assertEqual(r.status_code, 404)
-            body = r.json()
-            self.assertIn("not built", body.get("message", "").lower())
-
-            built = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(built.status_code, 200)
-            data = built.json()
-            self.assertEqual(data.get("status"), "success")
-            self.assertIn("download_url", data)
-
+            r = self.client.post(f"/reports/{rid}/build")
+            self.assertEqual(r.status_code, 200, msg=r.content)
+            syn = executive_synthesized_md_path(rid)
+            self.assertTrue(syn.is_file())
+            self.assertNotIn("Not provided", syn.read_text(encoding="utf-8").lower())
             p = executive_docx_path(rid)
             self.assertTrue(p.is_file())
-            dl = self.client.get(f"/reports/{rid}/download/executive.docx")
-            self.assertEqual(dl.status_code, 200)
         finally:
             with SessionLocal() as db:
                 row = db.get(AuditReport, rid)
                 if row:
                     db.delete(row)
                     db.commit()
-            p = executive_docx_path(rid)
-            if p.parent.is_dir():
-                for f in p.parent.glob("*"):
+            d = executive_docx_path(rid).parent
+            if d.is_dir():
+                for f in d.glob("*"):
                     f.unlink(missing_ok=True)
                 try:
-                    p.parent.rmdir()
+                    d.rmdir()
                 except OSError:
                     pass
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @patch(
+        "app.main.synthesize_executive_report",
+        return_value="## Executive Summary\n\nShort.",
+    )
+    def test_build_422_when_validation_fails(self, _mock_syn):
+        snap = json.dumps(
+            {
+                "executive_report_md": "x",
+                "technical_report_md": "",
+                "executive_summary_data": {},
+            }
+        )
+        with SessionLocal() as db:
+            ar = AuditReport(
+                domains="https://example.com",
+                score=70,
+                priority_level="medium",
+                report_html="<p>x</p>",
+                snapshot_json=snap,
+            )
+            db.add(ar)
+            db.commit()
+            rid = ar.id
+        try:
+            r = self.client.post(f"/reports/{rid}/build")
+            self.assertEqual(r.status_code, 422)
+            self.assertFalse(executive_docx_path(rid).is_file())
+        finally:
+            with SessionLocal() as db:
+                row = db.get(AuditReport, rid)
+                if row:
+                    db.delete(row)
+                    db.commit()
+
+
+class TestDocxRendering(unittest.TestCase):
+    @unittest.skipUnless(_docx_available(), "python-docx not installed")
+    def test_build_executive_docx_from_synthesized_shape(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            md_path = tdp / "executive_synthesized.md"
+            out_path = tdp / "executive.docx"
+            md_path.write_text(_SYNTH_OK, encoding="utf-8")
+            build_executive_docx(str(md_path), str(out_path))
+            self.assertTrue(out_path.exists())
+            self.assertGreater(out_path.stat().st_size, 2048)
 
 
 if __name__ == "__main__":

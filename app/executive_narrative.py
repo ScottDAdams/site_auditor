@@ -292,14 +292,12 @@ Include exactly one line containing: "The correct move is to ..."
         validate_executive_narrative(txt)
         return {"executive_report_md": txt}
 
-    last_err = ""
     for _ in range(3):
         try:
             out = llm.generate(prompt).strip()
             validate_executive_narrative(out)
             return {"executive_report_md": out}
-        except Exception as exc:  # keep retries deterministic
-            last_err = str(exc)
+        except Exception:  # keep retries deterministic
             prompt += (
                 "\n\nRETRY CONSTRAINTS:\n"
                 "- remove metric tokens and percentages\n"
@@ -337,7 +335,5 @@ Include exactly one line containing: "The correct move is to ..."
             "06 Expected Outcomes\n"
             "- Clearer paths and stronger capture.\n"
         )
-    if last_err:
-        fb += f"\n\n<!-- fallback_after_validation_error: {last_err} -->"
     return {"executive_report_md": fb}
 
