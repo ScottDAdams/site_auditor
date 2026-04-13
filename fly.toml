@@ -6,17 +6,17 @@
 # - Do not run more than one machine unless DATABASE_URL is Postgres (or another shared DB)
 #   and artifacts are stored elsewhere. Each machine has its own disk → duplicate/missing
 #   reports and 404s on executive.docx when the next request hits a different VM.
-# - Create the volume in the SAME region as primary_region below, e.g.:
-#     fly volumes create auditor_data --region ord --size 1
-#   (If Fly says the name exists, `fly volumes list` — destroy the unused region’s volume
-#   or pick a new mount name here and matching `fly volumes create my_name -r REGION`.)
+# - Create the volume in the SAME region as primary_region (iad):
+#     fly volumes create auditor_data --region iad --size 1
+#   (If Fly says the name exists, `fly volumes list` and resolve duplicates / rename mount.)
 # - Pin one machine:  fly scale count 1
 # To skip the volume (ephemeral only), comment out [mounts] and the SITE_AUDITOR_DATA line.
 #
-# IAD (Ashburn) often hits "insufficient CPUs"; ORD (Chicago) is a typical fallback.
+# If deploy fails with "insufficient CPUs" in iad, retry later or contact Fly; temporarily
+# trying another region requires a volume in that region and primary_region changed to match.
 
 app = 'site-auditor'
-primary_region = 'ord'
+primary_region = 'iad'
 
 [build]
 
@@ -36,8 +36,7 @@ primary_region = 'ord'
   min_machines_running = 1
   processes = ['app']
 
-# Smaller VM sometimes schedules when a region is tight; bump to 1024 if audits OOM.
 [[vm]]
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 512
+  memory_mb = 1024
