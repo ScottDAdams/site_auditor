@@ -10,14 +10,11 @@ from app.db.models import AuditReport
 from app.db.session import SessionLocal
 from app.report_build_jobs import set_report_build_state
 from app.reporting.audit_signal import load_audit_signal, save_audit_signal_file
-from app.reporting.compression import compress_report
 from app.reporting.executive_content import (
     executive_docx_path,
-    validate_executive_content,
+    validate_light,
 )
-from app.reporting.executive_pov import derive_strategic_pov
-from app.reporting.evidence_selection import select_top_proof
-from app.reporting.executive_writer import build_core_argument, write_executive_report
+from app.reporting.executive_writer import write_executive_report
 from app.reporting.report_builder import build_executive_docx
 
 
@@ -36,34 +33,48 @@ def run_report_build(report_id: int) -> None:
         if not isinstance(snapshot, dict):
             snapshot = {}
 
+        es = snapshot.get("executive_summary_data") or {}
+        if not isinstance(es, dict):
+            es = {}
+
         audit_signal = load_audit_signal(snapshot)
+        vp = snapshot.get("verification_pack")
+        if not isinstance(vp, dict):
+            vp = es.get("verification_pack") if isinstance(es.get("verification_pack"), dict) else {}
+
+        boardroom_brief = es.get("boardroom_summary")
+        if not isinstance(boardroom_brief, dict):
+            boardroom_brief = {}
+
+        technical_md = str(snapshot.get("technical_report_md") or "").strip()
+        executive_md = str(snapshot.get("executive_report_md") or "").strip()
+        if not executive_md:
+            executive_md = str(snapshot.get("executive_summary_text") or "").strip()
+
+        context = {
+            "audit_signal": audit_signal,
+            "verification_pack": vp,
+            "boardroom_brief": boardroom_brief,
+            "technical_md": technical_md,
+            "executive_md": executive_md,
+        }
+
         out_dir = executive_docx_path(report_id).parent
         out_dir.mkdir(parents=True, exist_ok=True)
         save_audit_signal_file(report_id, audit_signal)
 
         try:
-            strategic_pov = derive_strategic_pov(audit_signal)
+            synthesized_md = write_executive_report(context)
         except RuntimeError as exc:
             set_report_build_state(report_id, "error", [str(exc)])
             return
 
-        pov_path = out_dir / "strategic_pov.json"
-        pov_path.write_text(
-            json.dumps(strategic_pov, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        val = validate_light(
+            synthesized_md,
+            audit_signal,
+            verification_pack=vp,
+            boardroom_brief=boardroom_brief,
         )
-
-        proof = select_top_proof(audit_signal, strategic_pov)
-        core_argument = build_core_argument(strategic_pov)
-
-        try:
-            draft_md = write_executive_report(core_argument, proof)
-            synthesized_md = compress_report(draft_md)
-        except RuntimeError as exc:
-            set_report_build_state(report_id, "error", [str(exc)])
-            return
-
-        val = validate_executive_content(synthesized_md)
         if not val.get("ok"):
             set_report_build_state(
                 report_id,

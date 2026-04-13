@@ -3,7 +3,6 @@
 import unittest
 
 from app.reporting.audit_signal import audit_signal_path, build_audit_signal, load_audit_signal
-from app.reporting.executive_writer import build_core_argument
 
 
 class TestAuditSignal(unittest.TestCase):
@@ -59,19 +58,6 @@ class TestAuditSignal(unittest.TestCase):
     def test_audit_signal_path_ends_with_json(self):
         p = audit_signal_path(7)
         self.assertTrue(str(p).endswith("7/audit_signal.json"))
-
-
-class TestCoreArgument(unittest.TestCase):
-    def test_build_core_argument(self):
-        pov = {
-            "core_thesis": "Duplicate pages split one job.",
-            "mechanism": "Teams ship parallel URLs.",
-            "consequence": "Credit splinters.",
-            "priority_action": "Pick one owner page.",
-        }
-        s = build_core_argument(pov)
-        self.assertIn("because", s)
-        self.assertIn("The fix is", s)
 
 
 if __name__ == "__main__":

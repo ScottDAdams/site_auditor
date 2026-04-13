@@ -16,35 +16,35 @@ def _docx_available() -> bool:
 
 _MD = """## Executive Summary
 
-The site keeps several live URLs answering the same buyer question, so teams split ownership and measurement before any campaign change can read clearly.
+Roughly 20.0% overlap and 0.8800 similarity appear in the crawl sample.
 
-## Audit Scorecard
+## Core Problem
 
-Roughly four in ten crawled routes sit inside overlap clusters while paired pages mirror the same body story, which means the crawl repeats one narrative across multiple doors.
+Overlapping URLs.
 
-## If You Do One Thing
+## Why It Matters
 
-Pick one canonical URL for the strongest overlap pair and merge or visibly separate the twin page before funding more net-new routes.
+Splits demand.
 
-## What Is Breaking Performance
+## Evidence
 
-Parallel paths carry near-identical copy for one job. Internal owners disagree on which surface should win. Paid and organic entries land in a fork. Experiments run on one URL while fixes ship on another, so lift never stacks.
+Paired pages repeat structure.
 
-## Growth Opportunities
+## Recommended Action
 
-Retiring redundant doors turns calendar time toward intents the crawl never covered because effort kept recycling the same pages under different addresses.
+Consolidate the top cluster.
 
-## 30-Day Execution Plan
+## Execution Plan
 
-Week one maps overlaps and names keepers. Week two executes merges and redirects. Week three repairs internal links and sitemaps. Week four reads conversion only after the fork closes.
+Four weekly steps to merge and measure.
 
-## Risks of Delay
+## Risks of Inaction
 
-Extra weeks keep spend entering paired URLs and leave readouts noisy because the structural fork stays open.
+Noise in tests continues.
 
 ## Expected Outcomes
 
-One primary route per decision should restore clearer credit, calmer tests, and buyers meeting a single exhale instead of a tie between twins.
+Clearer paths.
 """
 
 
