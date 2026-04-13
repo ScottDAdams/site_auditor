@@ -91,6 +91,7 @@ from app.report import generate_report
 from app.utils import canonicalize_url
 from sqlalchemy import select
 
+from app.audit_runtime_state import get_audit_runtime, merge_audit_runtime
 from app.db.models import AuditReport
 from app.db.session import SessionLocal, init_db
 from app.rules_routes import router as rules_router
@@ -151,6 +152,7 @@ STATE = {
 
 def _set_phase(msg: str) -> None:
     STATE["phase"] = msg
+    merge_audit_runtime({"phase": msg})
 
 
 def derive_problem_type(clusters: list) -> str:
@@ -190,6 +192,8 @@ def root_redirect():
 
 @app.get("/audit", response_class=HTMLResponse)
 def audit_page(request: Request):
+    # DB-backed so every worker / CDN sees the same audit progress (not in-memory STATE).
+    rt = get_audit_runtime()
     return templates.TemplateResponse(
         request,
         "pages/audit.html",
@@ -198,12 +202,15 @@ def audit_page(request: Request):
             "nav_active": "audit",
             "title": "Run Audit",
             "state": {
-                "status": STATE.get("status"),
-                "phase": STATE.get("phase") or "",
-                "error": STATE.get("error"),
-                "summary_metrics": STATE.get("summary_metrics"),
-                "last_report_id": STATE.get("last_report_id"),
+                "status": rt.get("status"),
+                "phase": rt.get("phase") or "",
+                "error": rt.get("error"),
+                "summary_metrics": rt.get("summary_metrics"),
+                "last_report_id": rt.get("last_report_id"),
             },
+        },
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
         },
     )
 
@@ -595,12 +602,16 @@ def legacy_admin_redirect():
 @app.get("/api/audit-status")
 def audit_status():
     """Poll while status is running to show progress on the home page."""
+    rt = get_audit_runtime()
     return JSONResponse(
         {
-            "status": STATE.get("status"),
-            "phase": STATE.get("phase") or "",
-            "error": STATE.get("error"),
-        }
+            "status": rt.get("status"),
+            "phase": rt.get("phase") or "",
+            "error": rt.get("error"),
+            "last_report_id": rt.get("last_report_id"),
+            "summary_metrics": rt.get("summary_metrics"),
+        },
+        headers={"Cache-Control": "private, no-store, max-age=0"},
     )
 
 
@@ -915,15 +926,23 @@ def _run_audit_job(site_list: list[str]) -> None:
         except Exception as persist_exc:
             print("AUDIT PERSIST ERROR:", persist_exc)
 
-        STATE.update(
+        done_payload = {
+            "status": "done",
+            "phase": "Complete.",
+            "error": None,
+            "pages": pages,
+            "clusters": [c for c in clusters if is_valid_cluster(c)],
+            "findings": all_findings,
+            "report": report,
+            "last_report_id": last_id,
+            "summary_metrics": summary_metrics,
+        }
+        STATE.update(done_payload)
+        merge_audit_runtime(
             {
                 "status": "done",
                 "phase": "Complete.",
                 "error": None,
-                "pages": pages,
-                "clusters": [c for c in clusters if is_valid_cluster(c)],
-                "findings": all_findings,
-                "report": report,
                 "last_report_id": last_id,
                 "summary_metrics": summary_metrics,
             }
@@ -932,6 +951,13 @@ def _run_audit_job(site_list: list[str]) -> None:
         STATE["status"] = "error"
         STATE["phase"] = f"Failed: {exc}"
         STATE["error"] = str(exc)
+        merge_audit_runtime(
+            {
+                "status": "error",
+                "phase": f"Failed: {exc}",
+                "error": str(exc),
+            }
+        )
         print("AUDIT ERROR:", exc)
 
 
@@ -942,15 +968,23 @@ def run_audit(sites: str = Form(...)):
     if not site_list:
         return RedirectResponse(url="/audit?err=no_sites", status_code=303)
 
-    STATE.update(
+    start_payload = {
+        "status": "running",
+        "phase": "Starting…",
+        "error": None,
+        "pages": [],
+        "clusters": [],
+        "findings": [],
+        "report": "",
+        "last_report_id": None,
+        "summary_metrics": None,
+    }
+    STATE.update(start_payload)
+    merge_audit_runtime(
         {
             "status": "running",
             "phase": "Starting…",
             "error": None,
-            "pages": [],
-            "clusters": [],
-            "findings": [],
-            "report": "",
             "last_report_id": None,
             "summary_metrics": None,
         }
