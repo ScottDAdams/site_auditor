@@ -70,28 +70,15 @@ from app.executive_summary import (
 from app.executive_narrative import generate_executive_narrative
 from app.report_downloads import build_technical_markdown
 from app.verification_pack import build_verification_pack
-from app.reporting.audit_signal import (
-    build_audit_signal,
-    load_audit_signal,
-    save_audit_signal_file,
-)
-from app.reporting.compression import compress_report
-from app.reporting.executive_content import (
-    executive_docx_path,
-    validate_executive_content,
-)
-from app.reporting.executive_pov import derive_strategic_pov
-from app.reporting.executive_writer import (
-    build_core_argument,
-    write_executive_report,
-)
-from app.reporting.evidence_selection import select_top_proof
-from app.reporting.report_builder import build_executive_docx
+from app.reporting.audit_signal import build_audit_signal
+from app.reporting.executive_content import executive_docx_path
 from app.report import generate_report
 from app.utils import canonicalize_url
 from sqlalchemy import select
 
 from app.audit_runtime_state import get_audit_runtime, merge_audit_runtime
+from app.report_build_jobs import get_report_build_state, set_report_build_state
+from app.report_build_runner import run_report_build
 from app.db.models import AuditReport
 from app.db.session import SessionLocal, init_db
 from app.rules_routes import router as rules_router
@@ -460,9 +447,26 @@ def download_executive_docx(report_id: int):
     )
 
 
+@app.get("/reports/{report_id}/build-status")
+def report_build_status(report_id: int):
+    """Poll after POST /build (returns 202); avoids proxy timeout during LLM steps."""
+    st = get_report_build_state(report_id)
+    status = st.get("status") or "idle"
+    body: dict = {
+        "status": status,
+        "errors": st.get("errors") or [],
+    }
+    if status == "success":
+        body["download_url"] = f"/reports/{report_id}/download/executive.docx"
+    return JSONResponse(
+        body,
+        headers={"Cache-Control": "private, no-store, max-age=0"},
+    )
+
+
 @app.post("/reports/{report_id}/build")
 def build_client_report(report_id: int):
-    """Phase 15: audit_signal → POV → proof → writer → compress → validate → DOCX."""
+    """Queue Phase 15 build in a background thread; use GET .../build-status to poll."""
     with SessionLocal() as db:
         row = db.get(AuditReport, report_id)
     if not row:
@@ -470,72 +474,33 @@ def build_client_report(report_id: int):
             status_code=404,
             content={"status": "error", "errors": ["Audit not found."]},
         )
-    try:
-        snapshot = json.loads(row.snapshot_json or "{}")
-    except json.JSONDecodeError:
-        snapshot = {}
 
-    if not isinstance(snapshot, dict):
-        snapshot = {}
-
-    audit_signal = load_audit_signal(snapshot)
-
-    out_dir = executive_docx_path(report_id).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    save_audit_signal_file(report_id, audit_signal)
-
-    try:
-        strategic_pov = derive_strategic_pov(audit_signal)
-    except RuntimeError as exc:
+    existing = get_report_build_state(report_id)
+    if existing.get("status") == "running":
         return JSONResponse(
-            status_code=422,
+            status_code=202,
             content={
-                "status": "error",
-                "errors": [str(exc)],
+                "status": "running",
+                "message": "Build already in progress.",
+                "poll_url": f"/reports/{report_id}/build-status",
             },
+            headers={"Cache-Control": "private, no-store, max-age=0"},
         )
 
-    pov_path = out_dir / "strategic_pov.json"
-    pov_path.write_text(
-        json.dumps(strategic_pov, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    proof = select_top_proof(audit_signal, strategic_pov)
-    core_argument = build_core_argument(strategic_pov)
-
-    try:
-        draft_md = write_executive_report(core_argument, proof)
-        synthesized_md = compress_report(draft_md)
-    except RuntimeError as exc:
-        return JSONResponse(
-            status_code=422,
-            content={
-                "status": "error",
-                "errors": [str(exc)],
-            },
-        )
-
-    val = validate_executive_content(synthesized_md)
-    if not val.get("ok"):
-        return JSONResponse(
-            status_code=422,
-            content={
-                "status": "error",
-                "errors": val.get("errors") or ["Validation failed."],
-            },
-        )
-
-    syn_path = out_dir / "executive_synthesized.md"
-    docx_path = out_dir / "executive.docx"
-    syn_path.write_text(synthesized_md, encoding="utf-8")
-    build_executive_docx(str(syn_path), str(docx_path))
+    set_report_build_state(report_id, "running", [])
+    threading.Thread(
+        target=run_report_build,
+        args=(report_id,),
+        daemon=True,
+    ).start()
 
     return JSONResponse(
-        {
-            "status": "success",
-            "download_url": f"/reports/{report_id}/download/executive.docx",
-        }
+        status_code=202,
+        content={
+            "status": "queued",
+            "poll_url": f"/reports/{report_id}/build-status",
+        },
+        headers={"Cache-Control": "private, no-store, max-age=0"},
     )
 
 

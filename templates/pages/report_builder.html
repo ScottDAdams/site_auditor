@@ -47,26 +47,89 @@
 {% block scripts %}
 <script>
 (function () {
-  document.querySelectorAll(".js-build-report").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var id = btn.getAttribute("data-report-id");
-      var st = document.getElementById("status-" + id);
-      if (st) { st.textContent = "Building…"; }
-      btn.disabled = true;
-      fetch("/reports/" + id + "/build", { method: "POST", credentials: "same-origin" })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
-        .then(function (res) {
-          if (!res.ok) {
-            var err = (res.body && res.body.errors) ? res.body.errors.join(" ") : (res.body && res.body.message) || "Build failed";
+  var pollMs = 1200;
+  var maxPolls = 200;
+  function pollBuild(id, st, btn) {
+    var n = 0;
+    function tick() {
+      n += 1;
+      if (n > maxPolls) {
+        if (st) { st.textContent = "Still no result after several minutes; refresh the page or try again."; }
+        btn.disabled = false;
+        return;
+      }
+      fetch("/reports/" + id + "/build-status", { credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          var s = body.status || "idle";
+          if (s === "running") {
+            if (st) { st.textContent = "Building… (this can take a few minutes)"; }
+            setTimeout(tick, pollMs);
+            return;
+          }
+          if (s === "success") {
+            if (st) { st.textContent = "Ready."; }
+            var row = document.getElementById("row-" + id);
+            var href = body.download_url || ("/reports/" + id + "/download/executive.docx");
+            if (row && href && !row.querySelector('a[href="' + href + '"]')) {
+              var a = document.createElement("a");
+              a.href = href;
+              a.className = "btn-download-md";
+              a.textContent = "Download .docx";
+              btn.parentNode.insertBefore(a, btn.nextSibling);
+            }
+            btn.disabled = false;
+            return;
+          }
+          if (s === "error") {
+            var err = (body.errors && body.errors.length) ? body.errors.join(" ") : "Build failed";
             if (st) { st.textContent = "Error: " + err; }
             btn.disabled = false;
             return;
           }
-          if (st) { st.textContent = "Ready."; }
-          var row = document.getElementById("row-" + id);
-          if (row && res.body && res.body.download_url) {
+          btn.disabled = false;
+        })
+        .catch(function () {
+          if (st) { st.textContent = "Status check failed; refresh the page."; }
+          btn.disabled = false;
+        });
+    }
+    tick();
+  }
+
+  document.querySelectorAll(".js-build-report").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var id = btn.getAttribute("data-report-id");
+      var st = document.getElementById("status-" + id);
+      if (st) { st.textContent = "Starting…"; }
+      btn.disabled = true;
+      fetch("/reports/" + id + "/build", { method: "POST", credentials: "same-origin" })
+        .then(function (r) {
+          return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+        })
+        .then(function (res) {
+          if (res.status === 404) {
+            var err404 = (res.body && res.body.errors) ? res.body.errors.join(" ") : "Not found";
+            if (st) { st.textContent = "Error: " + err404; }
+            btn.disabled = false;
+            return;
+          }
+          if (res.status === 202 || (res.body && (res.body.status === "queued" || res.body.status === "running"))) {
+            if (st) { st.textContent = "Building… (this can take a few minutes)"; }
+            pollBuild(id, st, btn);
+            return;
+          }
+          if (!res.ok) {
+            var err = (res.body && res.body.errors) ? res.body.errors.join(" ") : "Build failed";
+            if (st) { st.textContent = "Error: " + err; }
+            btn.disabled = false;
+            return;
+          }
+          if (res.body && res.body.status === "success" && res.body.download_url) {
+            if (st) { st.textContent = "Ready."; }
+            var row = document.getElementById("row-" + id);
             var href = res.body.download_url;
-            if (!row.querySelector('a[href="' + href + '"]')) {
+            if (row && !row.querySelector('a[href="' + href + '"]')) {
               var a = document.createElement("a");
               a.href = href;
               a.className = "btn-download-md";

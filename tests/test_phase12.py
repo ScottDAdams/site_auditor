@@ -2,15 +2,37 @@
 
 import json
 import os
+import time
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.db.models import AuditReport
+from app.db.models import AppSetting, AuditReport
 from app.db.session import SessionLocal
 from app.main import app
 from app.reporting.executive_content import executive_docx_path, validate_executive_content
+
+
+def _wait_report_build(client: TestClient, report_id: int, timeout: float = 20.0) -> tuple[bool, dict]:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = client.get(f"/reports/{report_id}/build-status")
+        data = r.json()
+        if data.get("status") == "success":
+            return True, data
+        if data.get("status") == "error":
+            return False, data
+        time.sleep(0.05)
+    return False, {"status": "timeout", "errors": ["poll timeout"]}
+
+
+def _delete_build_job_row(report_id: int) -> None:
+    with SessionLocal() as db:
+        row = db.get(AppSetting, f"report.build.job.{report_id}")
+        if row:
+            db.delete(row)
+            db.commit()
 
 
 def _docx_available() -> bool:
@@ -81,9 +103,9 @@ class TestReportBuilderEndpoint(unittest.TestCase):
         self.client = TestClient(app)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @patch("app.main.compress_report", side_effect=lambda x: x)
-    @patch("app.main.write_executive_report", return_value=_SYNTH_OK)
-    @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
+    @patch("app.report_build_runner.compress_report", side_effect=lambda x: x)
+    @patch("app.report_build_runner.write_executive_report", return_value=_SYNTH_OK)
+    @patch("app.report_build_runner.derive_strategic_pov", return_value=_VALID_POV)
     def test_docx_404_until_built(self, _mock_pov, _mock_write, _mock_comp):
         snap = json.dumps(
             {
@@ -114,9 +136,10 @@ class TestReportBuilderEndpoint(unittest.TestCase):
             self.assertIn("not built", body.get("message", "").lower())
 
             built = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(built.status_code, 200)
-            data = built.json()
-            self.assertEqual(data.get("status"), "success")
+            self.assertEqual(built.status_code, 202, msg=built.content)
+            self.assertEqual(built.json().get("status"), "queued")
+            ok, data = _wait_report_build(self.client, rid)
+            self.assertTrue(ok, msg=data)
             self.assertIn("download_url", data)
 
             p = executive_docx_path(rid)
@@ -124,6 +147,7 @@ class TestReportBuilderEndpoint(unittest.TestCase):
             dl = self.client.get(f"/reports/{rid}/download/executive.docx")
             self.assertEqual(dl.status_code, 200)
         finally:
+            _delete_build_job_row(rid)
             with SessionLocal() as db:
                 row = db.get(AuditReport, rid)
                 if row:

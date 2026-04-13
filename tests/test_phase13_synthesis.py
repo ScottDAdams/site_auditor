@@ -2,12 +2,13 @@
 
 import json
 import os
+import time
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.db.models import AuditReport
+from app.db.models import AppSetting, AuditReport
 from app.db.session import SessionLocal
 from app.main import app
 from app.reporting.executive_content import (
@@ -17,6 +18,27 @@ from app.reporting.executive_content import (
     validate_executive_content,
 )
 from app.reporting.report_builder import build_executive_docx
+
+
+def _wait_report_build(client: TestClient, report_id: int, timeout: float = 20.0) -> tuple[bool, dict]:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = client.get(f"/reports/{report_id}/build-status")
+        data = r.json()
+        if data.get("status") == "success":
+            return True, data
+        if data.get("status") == "error":
+            return False, data
+        time.sleep(0.05)
+    return False, {"status": "timeout", "errors": ["poll timeout"]}
+
+
+def _delete_build_job_row(report_id: int) -> None:
+    with SessionLocal() as db:
+        row = db.get(AppSetting, f"report.build.job.{report_id}")
+        if row:
+            db.delete(row)
+            db.commit()
 
 
 def _docx_available() -> bool:
@@ -128,9 +150,9 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
         self.client = TestClient(app)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @patch("app.main.compress_report", side_effect=lambda x: x)
-    @patch("app.main.write_executive_report", return_value=_SYNTH_OK)
-    @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
+    @patch("app.report_build_runner.compress_report", side_effect=lambda x: x)
+    @patch("app.report_build_runner.write_executive_report", return_value=_SYNTH_OK)
+    @patch("app.report_build_runner.derive_strategic_pov", return_value=_VALID_POV)
     def test_build_writes_artifacts_and_docx(self, _mock_pov, _mock_write, _mock_comp):
         snap = json.dumps(
             {
@@ -156,7 +178,9 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
             rid = ar.id
         try:
             r = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(r.status_code, 200, msg=r.content)
+            self.assertEqual(r.status_code, 202, msg=r.content)
+            ok, st = _wait_report_build(self.client, rid)
+            self.assertTrue(ok, msg=st)
             self.assertTrue(strategic_pov_path(rid).is_file())
             syn = executive_synthesized_md_path(rid)
             self.assertTrue(syn.is_file())
@@ -164,6 +188,7 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
             p = executive_docx_path(rid)
             self.assertTrue(p.is_file())
         finally:
+            _delete_build_job_row(rid)
             with SessionLocal() as db:
                 row = db.get(AuditReport, rid)
                 if row:
@@ -179,12 +204,12 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
                     pass
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @patch("app.main.compress_report", side_effect=lambda x: x)
+    @patch("app.report_build_runner.compress_report", side_effect=lambda x: x)
     @patch(
-        "app.main.write_executive_report",
+        "app.report_build_runner.write_executive_report",
         return_value="## Executive Summary\n\nToo few words.",
     )
-    @patch("app.main.derive_strategic_pov", return_value=_VALID_POV)
+    @patch("app.report_build_runner.derive_strategic_pov", return_value=_VALID_POV)
     def test_build_422_when_validation_fails(self, _mock_pov, _mock_write, _mock_comp):
         snap = json.dumps(
             {
@@ -207,9 +232,14 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
             rid = ar.id
         try:
             r = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(r.status_code, 422)
+            self.assertEqual(r.status_code, 202)
+            ok, data = _wait_report_build(self.client, rid)
+            self.assertFalse(ok)
+            self.assertEqual(data.get("status"), "error")
+            self.assertTrue(data.get("errors"))
             self.assertFalse(executive_docx_path(rid).is_file())
         finally:
+            _delete_build_job_row(rid)
             with SessionLocal() as db:
                 row = db.get(AuditReport, rid)
                 if row:
