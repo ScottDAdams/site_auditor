@@ -11,6 +11,7 @@ from app.db.models import AppSetting, AuditReport
 from app.db.session import SessionLocal
 from app.main import app
 from app.reporting.executive_content import (
+    MIN_SYNTHESIS_CHARS,
     executive_docx_path,
     executive_synthesized_md_path,
     validate_light,
@@ -42,54 +43,39 @@ _AUDIT = {
     "priority_actions": ["act"],
 }
 
-_SYNTH_OK = """## Executive Summary
+_SYNTH_OK = """## Opening
 
-Roughly 20.0% of crawled routes sit in overlap while paired pages show 0.8800 text similarity, so one narrative is being told through multiple doors.
+Roughly 20.0% of crawled routes sit in overlap while paired pages show 0.8800 text similarity, so one narrative is being told through multiple doors. Duplicate routes answer the same buyer job without a single owner URL, which splits conversion and test readouts when demand lands on competing surfaces.
 
-## Core Problem
+Cluster proofs in the verification pack show the same section patterns across paired URLs in the sample. The priority is to pick one canonical URL per top cluster and merge or differentiate the twin this month.
 
-Duplicate routes answer the same buyer job without a single owner URL.
+## Next thirty days
 
-## Why It Matters
-
-Conversion and test readouts split when demand lands on competing surfaces.
-
-## Evidence
-
-Cluster proofs show the same section patterns across paired URLs in the sample.
-
-## Recommended Action
-
-Pick one canonical URL per top cluster and merge or differentiate the twin this month.
-
-## Execution Plan
-
-Week 1 map overlaps. Week 2 execute merges. Week 3 fix internal links. Week 4 read conversion.
-
-## Risks of Inaction
-
-Spend keeps feeding both routes while lift stays unreadable.
-
-## Expected Outcomes
-
-One primary path per decision restores clearer credit and calmer optimization.
+Week 1 map overlaps. Week 2 execute merges. Week 3 fix internal links. Week 4 read conversion. Spend otherwise keeps feeding both routes while lift stays unreadable; one primary path per decision restores clearer credit and calmer optimization.
 """
 
 
 class TestSynthesisValidation(unittest.TestCase):
-    def test_validate_rejects_missing_section(self):
-        short = "## Executive Summary\n\n20.0% overlap and 0.8800 similarity noted.\n"
-        r = validate_light(short, _AUDIT)
-        self.assertFalse(r["ok"])
+    def test_validate_allows_partial_h2_only(self):
+        partial = "## Executive Summary\n\n" + ("Body paragraph. " * 80)
+        self.assertGreaterEqual(len(partial.strip()), MIN_SYNTHESIS_CHARS)
+        r = validate_light(partial, _AUDIT)
+        self.assertTrue(r["ok"], msg=r.get("errors"))
 
     def test_validate_ok_full_doc(self):
         r = validate_light(_SYNTH_OK, _AUDIT)
         self.assertTrue(r["ok"], msg=r.get("errors"))
 
-    def test_validate_requires_two_metrics(self):
-        one = _SYNTH_OK.replace("0.8800 text similarity", "high similarity")
-        r = validate_light(one, _AUDIT)
-        self.assertFalse(r["ok"])
+    def test_validate_allows_prose_without_metrics(self):
+        prose = (
+            "Structural overlap fragments how the business reads performance. "
+            "Multiple routes answer equivalent buyer jobs so credit splinters and "
+            "tests contradict each other. The crawl and cluster view make the "
+            "pattern obvious: the same blocks repeat across paired URLs. "
+            "Canonicalization per intent cluster is the lever. "
+        ) * 12
+        r = validate_light(prose, _AUDIT)
+        self.assertTrue(r["ok"], msg=r.get("errors"))
 
 
 @unittest.skipUnless(_docx_available(), "python-docx not installed")
@@ -150,7 +136,7 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @patch(
         "app.report_build_runner.write_executive_report",
-        return_value="## Executive Summary\n\nToo short.",
+        return_value="Too short.",
     )
     def test_build_error_when_validation_fails(self, _mock_write):
         snap = json.dumps(
@@ -200,6 +186,24 @@ class TestDocxRendering(unittest.TestCase):
             md_path = tdp / "executive_synthesized.md"
             out_path = tdp / "executive.docx"
             md_path.write_text(_SYNTH_OK, encoding="utf-8")
+            build_executive_docx(str(md_path), str(out_path))
+            self.assertTrue(out_path.exists())
+            self.assertGreater(out_path.stat().st_size, 2048)
+
+    @unittest.skipUnless(_docx_available(), "python-docx not installed")
+    def test_build_docx_from_plain_prose_md(self):
+        import tempfile
+        from pathlib import Path
+
+        prose = (
+            "Executive narrative without forced headings. "
+            "Roughly 20.0% overlap and 0.8800 similarity appear in the crawl. "
+        ) * 30
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            md_path = tdp / "executive_synthesized.md"
+            out_path = tdp / "executive.docx"
+            md_path.write_text(prose, encoding="utf-8")
             build_executive_docx(str(md_path), str(out_path))
             self.assertTrue(out_path.exists())
             self.assertGreater(out_path.stat().st_size, 2048)

@@ -1,7 +1,9 @@
 """
-Deterministic DOCX rendering for Phase 13 synthesized executive Markdown.
+Deterministic DOCX rendering for synthesized executive Markdown.
 
-Pure presentation: reads executive_synthesized.md only (## sections). No section stitching from multiple sources.
+Reads only the file at md_path (typically executive_synthesized.md). Optional ## headings
+become section titles; prose without headings is rendered under a single body block.
+No stitching from other report sources.
 """
 
 from __future__ import annotations
@@ -87,9 +89,9 @@ def _add_cover(doc) -> None:
 
 def build_executive_docx(md_path: str, output_path: str) -> None:
     """
-    Render synthesized executive Markdown (## headings) to DOCX.
+    Render synthesized executive Markdown to DOCX.
 
-    Reads only the file at md_path. Does not read technical_report.md or other sidecars.
+    Reads only the file at md_path (executive_synthesized.md from the build pipeline).
     """
     try:
         from docx import Document

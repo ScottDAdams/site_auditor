@@ -11,7 +11,9 @@ from app.db.models import AppSetting, AuditReport
 from app.db.session import SessionLocal
 from app.main import app
 from app.reporting.executive_content import (
+    MIN_SYNTHESIS_CHARS,
     executive_docx_path,
+    executive_synthesized_md_path,
     validate_light,
 )
 
@@ -32,38 +34,16 @@ _AUDIT = {
     "priority_actions": ["act"],
 }
 
-# Metrics must ground in _AUDIT (20% from 0.2, 0.88 from similarity)
-_SYNTH_OK = """## Executive Summary
+# Metrics ground in _AUDIT; length must satisfy MIN_SYNTHESIS_CHARS
+_SYNTH_OK = """## Opening
 
-Roughly 20.0% of crawled routes sit in overlap while paired pages show 0.8800 text similarity, so one narrative is being told through multiple doors.
+Roughly 20.0% of crawled routes sit in overlap while paired pages show 0.8800 text similarity, so one narrative is being told through multiple doors. Duplicate routes answer the same buyer job without a single owner URL, which splits conversion and test readouts when demand lands on competing surfaces.
 
-## Core Problem
+Cluster proofs in the verification pack show the same section patterns across paired URLs in the sample. The priority is to pick one canonical URL per top cluster and merge or differentiate the twin this month.
 
-Duplicate routes answer the same buyer job without a single owner URL.
+## Next thirty days
 
-## Why It Matters
-
-Conversion and test readouts split when demand lands on competing surfaces.
-
-## Evidence
-
-Cluster proofs show the same section patterns across paired URLs in the sample.
-
-## Recommended Action
-
-Pick one canonical URL per top cluster and merge or differentiate the twin this month.
-
-## Execution Plan
-
-Week 1 map overlaps. Week 2 execute merges. Week 3 fix internal links. Week 4 read conversion.
-
-## Risks of Inaction
-
-Spend keeps feeding both routes while lift stays unreadable.
-
-## Expected Outcomes
-
-One primary path per decision restores clearer credit and calmer optimization.
+Week 1 map overlaps. Week 2 execute merges. Week 3 fix internal links. Week 4 read conversion. Spend otherwise keeps feeding both routes while lift stays unreadable; one primary path per decision restores clearer credit and calmer optimization.
 """
 
 
@@ -76,14 +56,28 @@ def _delete_build_job_row(report_id: int) -> None:
 
 
 class TestExecutiveContent(unittest.TestCase):
-    def test_validate_rejects_empty_section_metric_count(self):
-        bad = _SYNTH_OK.replace("20.0%", "many pages")
-        r = validate_light(bad, _AUDIT)
+    def test_validate_rejects_too_short(self):
+        short = "x" * (MIN_SYNTHESIS_CHARS - 1)
+        r = validate_light(short, _AUDIT)
         self.assertFalse(r["ok"])
 
     def test_validate_ok(self):
         v = validate_light(_SYNTH_OK, _AUDIT)
         self.assertTrue(v["ok"], msg=v.get("errors"))
+
+    def test_validate_ok_without_h2_headings(self):
+        prose = (
+            "The site structure fragments demand across overlapping routes. "
+            "Roughly 20.0% of crawled URLs compete for the same intent while "
+            "paired pages show 0.8800 similarity, which dilutes measurement and "
+            "slows decisions. Consolidation around one canonical path per cluster "
+            "is the commercial lever; without it, spend scales against duplicate "
+            "surfaces and tests read as noise. The verification pack pairs give "
+            "concrete URLs to merge or differentiate first. "
+        ) * 3
+        self.assertGreaterEqual(len(prose.strip()), MIN_SYNTHESIS_CHARS)
+        r = validate_light(prose, _AUDIT)
+        self.assertTrue(r["ok"], msg=r.get("errors"))
 
 
 @unittest.skipUnless(_docx_available(), "python-docx not installed")
@@ -124,16 +118,29 @@ class TestReportBuilderEndpoint(unittest.TestCase):
             body = r.json()
             self.assertIn("not built", body.get("message", "").lower())
 
+            rmd = self.client.get(
+                f"/reports/{rid}/download/executive_synthesized.md"
+            )
+            self.assertEqual(rmd.status_code, 404)
+
             built = self.client.post(f"/reports/{rid}/build?sync=1")
             self.assertEqual(built.status_code, 200, msg=built.content)
             data = built.json()
             self.assertEqual(data.get("status"), "success")
             self.assertIn("download_url", data)
+            self.assertIn("synthesized_md_url", data)
 
+            syn = executive_synthesized_md_path(rid)
+            self.assertTrue(syn.is_file())
             p = executive_docx_path(rid)
             self.assertTrue(p.is_file())
             dl = self.client.get(f"/reports/{rid}/download/executive.docx")
             self.assertEqual(dl.status_code, 200)
+            mdl = self.client.get(
+                f"/reports/{rid}/download/executive_synthesized.md"
+            )
+            self.assertEqual(mdl.status_code, 200)
+            self.assertIn(b"20.0%", mdl.content)
         finally:
             _delete_build_job_row(rid)
             with SessionLocal() as db:

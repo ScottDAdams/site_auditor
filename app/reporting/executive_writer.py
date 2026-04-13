@@ -16,93 +16,39 @@ from app.db.session import SessionLocal
 
 _TASK_KEY = "prompt.task.executive_writer.system"
 
-_DEFAULT_SYSTEM = """You are writing a board-level SEO and growth audit report.
+_DEFAULT_SYSTEM = """You are a senior consultant delivering a board-level SEO and growth audit.
 
-Your job is to synthesize structured audit data and supporting materials into a clear, persuasive executive narrative.
+Your job is to interpret raw audit signal and evidence yourself—prioritize, argue, and narrate in one coherent piece. This is not summarizing someone else's summary; you are forming the conclusion from primary material.
 
-This is not a summary task. This is an argument.
+From the inputs, develop:
+- the single dominant structural problem (your judgment)
+- why it matters commercially
+- specific support: metrics, cluster or URL examples from the data
+- a clear recommended course of action and what happens if nothing changes
 
-Use the inputs to:
-- identify the single dominant structural problem
-- explain why it matters commercially
-- support it with concrete evidence (metrics, clusters, URLs)
-- recommend a clear course of action
-- describe the consequence of inaction
+Tone: direct, authoritative, non-generic—like a top firm memo, not a checklist or slide outline.
 
-Write in a tone consistent with top consulting firms (McKinsey, Bain, BCG):
-- direct
-- structured
-- non-generic
-- no filler language
+Ground important claims in the data (numbers, URLs, structural facts). Do not invent metrics.
 
-Avoid vague claims. Every important statement should be grounded in:
-- a metric
-- a concrete example
-- or a structural observation
+Do NOT say "the audit shows," "per the report," or otherwise refer to documents as sources—state conclusions as your expert view.
 
-Do NOT mention "the audit shows" or refer to inputs directly.
-Write as if this is your expert conclusion.
+Do NOT use stock consulting filler or repeated template phrases (e.g. "The correct move is").
 
-Maintain narrative flow across sections. Each section should build on the previous one.
+Output Markdown only. You control structure: use headings only where they improve readability; merge or omit sections if the narrative flows better without a rigid outline. Prefer flowing prose; avoid bullet-only decks unless bullets truly clarify.
 
-You may reuse phrasing from inputs where useful, but do not copy blocks verbatim.
-
-Clarity and authority are more important than brevity.
-
-OUTPUT: Markdown only. Use exactly these level-2 headings in this order (## followed by title):
-
-## Executive Summary
-## Core Problem
-## Why It Matters
-## Evidence
-## Recommended Action
-## Execution Plan
-## Risks of Inaction
-## Expected Outcomes
-
-No other level-2 headings. Body under each heading.
+Clarity and judgment matter more than brevity.
 """
 
-_USER_TEMPLATE = """Write a complete executive report using the following inputs.
+_USER_TEMPLATE = """Write the executive narrative from these inputs only. Interpret and prioritize; do not mirror any pre-written executive summary structure.
 
-[STRUCTURED DATA]
+[STRUCTURED DATA — audit_signal]
 {audit_signal_json}
 
-[SUPPORTING EVIDENCE]
+[SUPPORTING EVIDENCE — verification_pack]
 {verification_pack_json}
 
-[BOARDROOM BRIEF]
-{boardroom_brief_json}
-
-[TECHNICAL DETAIL]
+[TECHNICAL DETAIL — raw diagnostics]
 {technical_md}
-
-[PRIOR EXECUTIVE SUMMARY]
-{executive_md}
-
----
-
-Required sections (use the ## headings specified in your instructions):
-
-1. Executive Summary
-2. Core Problem
-3. Why It Matters
-4. Evidence
-5. Recommended Action
-6. Execution Plan (30 days, ordered)
-7. Risks of Inaction
-8. Expected Outcomes
-
----
-
-Requirements:
-
-- Anchor claims in real metrics (overlap %, similarity, etc.)
-- Reference real URLs where helpful
-- Keep sections tight but not artificially constrained
-- Avoid repetition across sections
-- Do not default to generic consulting phrases
-- Make this feel like a high-stakes business diagnosis, not an SEO checklist
 """
 
 
@@ -129,9 +75,7 @@ def write_executive_report(context: dict[str, Any]) -> str:
 
     audit_signal = context.get("audit_signal") or {}
     verification_pack = context.get("verification_pack") or {}
-    boardroom_brief = context.get("boardroom_brief") or {}
     technical_md = str(context.get("technical_md") or "")[:24000]
-    executive_md = str(context.get("executive_md") or "")[:16000]
 
     audit_signal_json = json.dumps(audit_signal, indent=2, default=str, ensure_ascii=False)[
         :28000
@@ -139,17 +83,12 @@ def write_executive_report(context: dict[str, Any]) -> str:
     verification_pack_json = json.dumps(
         verification_pack, indent=2, default=str, ensure_ascii=False
     )[:28000]
-    boardroom_brief_json = json.dumps(
-        boardroom_brief, indent=2, default=str, ensure_ascii=False
-    )[:16000]
 
     system = _get_or_seed_system_prompt()
     user = _USER_TEMPLATE.format(
         audit_signal_json=audit_signal_json,
         verification_pack_json=verification_pack_json,
-        boardroom_brief_json=boardroom_brief_json,
         technical_md=technical_md,
-        executive_md=executive_md,
     )
     prompt = f"""{system}
 

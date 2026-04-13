@@ -42,21 +42,14 @@ def run_report_build(report_id: int) -> None:
         if not isinstance(vp, dict):
             vp = es.get("verification_pack") if isinstance(es.get("verification_pack"), dict) else {}
 
-        boardroom_brief = es.get("boardroom_summary")
-        if not isinstance(boardroom_brief, dict):
-            boardroom_brief = {}
-
         technical_md = str(snapshot.get("technical_report_md") or "").strip()
-        executive_md = str(snapshot.get("executive_report_md") or "").strip()
-        if not executive_md:
-            executive_md = str(snapshot.get("executive_summary_text") or "").strip()
 
+        # Single-pass synthesis: only primary signal, evidence pack, and raw technical text.
+        # Do not pass pre-written executive copy or boardroom brief into the writer.
         context = {
             "audit_signal": audit_signal,
             "verification_pack": vp,
-            "boardroom_brief": boardroom_brief,
             "technical_md": technical_md,
-            "executive_md": executive_md,
         }
 
         out_dir = executive_docx_path(report_id).parent
@@ -73,7 +66,6 @@ def run_report_build(report_id: int) -> None:
             synthesized_md,
             audit_signal,
             verification_pack=vp,
-            boardroom_brief=boardroom_brief,
         )
         if not val.get("ok"):
             set_report_build_state(

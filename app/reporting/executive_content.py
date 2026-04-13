@@ -23,23 +23,8 @@ def executive_synthesized_md_path(report_id: int) -> Path:
     return _generated_dir(report_id) / "executive_synthesized.md"
 
 
-LIGHT_REQUIRED_SECTIONS = (
-    "Executive Summary",
-    "Core Problem",
-    "Why It Matters",
-    "Evidence",
-    "Recommended Action",
-    "Execution Plan",
-    "Risks of Inaction",
-    "Expected Outcomes",
-)
-
-
-def _extract_h2_titles(md: str) -> list[str]:
-    titles: list[str] = []
-    for m in re.finditer(r"(?m)^##\s+(.+?)\s*$", md or ""):
-        titles.append(m.group(1).strip())
-    return titles
+# Minimum body length so trivial or empty LLM output cannot pass as a report.
+MIN_SYNTHESIS_CHARS = 400
 
 
 def _grounding_blob(audit_signal: dict[str, Any]) -> str:
@@ -67,9 +52,20 @@ def _token_grounded(token: str, blob: str) -> bool:
                 f"{frac:.4f}",
                 f"{frac:.3f}",
                 f"{frac:.2f}",
+                f"{frac:.1f}",
+                str(frac),
                 str(int(round(pct))),
                 str(round(pct, 1)),
             ):
+                if cand in compact:
+                    return True
+        except ValueError:
+            pass
+    # Similarity-style decimals in prose may use more digits than JSON (e.g. 0.8800 vs 0.88).
+    if re.match(r"^0\.\d+$", t):
+        try:
+            v = float(t)
+            for cand in (t, f"{v:.4f}", f"{v:.3f}", f"{v:.2f}", str(v)):
                 if cand in compact:
                     return True
         except ValueError:
@@ -82,33 +78,24 @@ def validate_light(
     audit_signal: dict[str, Any],
     *,
     verification_pack: dict[str, Any] | None = None,
-    boardroom_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Post-check only: non-empty, required ## sections, >=2 metric-like tokens,
-    soft grounding against audit_signal (+ optional packs).
+    Post-check only: non-empty, minimum length, and soft numeric grounding.
+    Does not enforce section titles or writing shape.
     """
     text = (md or "").strip()
     errors: list[str] = []
     if not text:
         return {"ok": False, "errors": ["Report is empty"]}
-
-    titles = _extract_h2_titles(text)
-    for req in LIGHT_REQUIRED_SECTIONS:
-        if req not in titles:
-            errors.append(f"Missing required section: ## {req}")
-
-    metrics = _metric_tokens_in_report(text)
-    if len(metrics) < 2:
+    if len(text) < MIN_SYNTHESIS_CHARS:
         errors.append(
-            "At least two metric-style values (e.g. percentages or 0.xx similarities) are required"
+            f"Report is too short (minimum {MIN_SYNTHESIS_CHARS} characters)"
         )
 
+    metrics = _metric_tokens_in_report(text)
     blob = _grounding_blob(audit_signal)
     if verification_pack:
         blob += json.dumps(verification_pack, default=str)
-    if boardroom_brief:
-        blob += json.dumps(boardroom_brief, default=str)
 
     ungrounded = [m for m in metrics if not _token_grounded(m, blob)]
     if len(ungrounded) > 2:

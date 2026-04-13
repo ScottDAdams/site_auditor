@@ -2,7 +2,7 @@
 
 import unittest
 
-from app.reporting.executive_content import LIGHT_REQUIRED_SECTIONS, validate_light
+from app.reporting.executive_content import MIN_SYNTHESIS_CHARS, validate_light
 
 
 _BASE_AUDIT = {
@@ -12,50 +12,18 @@ _BASE_AUDIT = {
     "priority_actions": [],
 }
 
-_DOC = """## Executive Summary
-
-Roughly 20.0% overlap and 0.8800 similarity drive the diagnosis.
-
-## Core Problem
-
-Twin URLs.
-
-## Why It Matters
-
-Splits credit.
-
-## Evidence
-
-Sample pairs repeat blocks.
-
-## Recommended Action
-
-Canonicalize.
-
-## Execution Plan
-
-Week 1–4 rollout.
-
-## Risks of Inaction
-
-Noise persists.
-
-## Expected Outcomes
-
-Clearer paths.
-"""
+_DOC = """Roughly 20.0% overlap and 0.8800 similarity drive the diagnosis. Twin URLs split credit; sample pairs repeat blocks. Canonicalize the top cluster first. Week 1–4 rollout. Noise persists without action. Clearer paths follow consolidation. """ * 8
 
 
 class TestValidateLight(unittest.TestCase):
-    def test_required_sections_constant(self):
-        self.assertEqual(len(LIGHT_REQUIRED_SECTIONS), 8)
+    def test_min_length_constant_sane(self):
+        self.assertGreaterEqual(MIN_SYNTHESIS_CHARS, 200)
 
     def test_grounding_allows_percent_from_decimal_rate(self):
         r = validate_light(_DOC, _BASE_AUDIT)
         self.assertTrue(r["ok"], msg=r.get("errors"))
 
     def test_too_many_ungrounded_numbers_fails(self):
-        # validate_light flags when more than two metric tokens lack grounding
         bad = _DOC.replace("20.0%", "99.9%").replace("0.8800", "0.1234")
         bad = bad.replace("Week 1–4", "Week 1–4 with 77.7% drag")
         r = validate_light(bad, _BASE_AUDIT)

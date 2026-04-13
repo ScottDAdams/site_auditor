@@ -73,7 +73,10 @@ from app.executive_narrative import generate_executive_narrative
 from app.report_downloads import build_technical_markdown
 from app.verification_pack import build_verification_pack
 from app.reporting.audit_signal import build_audit_signal
-from app.reporting.executive_content import executive_docx_path
+from app.reporting.executive_content import (
+    executive_docx_path,
+    executive_synthesized_md_path,
+)
 from app.report import generate_report
 from app.utils import canonicalize_url
 from sqlalchemy import select
@@ -449,6 +452,24 @@ def download_executive_docx(report_id: int):
     )
 
 
+@app.get("/reports/{report_id}/download/executive_synthesized.md")
+def download_executive_synthesized_markdown(report_id: int):
+    """LLM-synthesized executive narrative (written by POST /reports/{id}/build)."""
+    path = executive_synthesized_md_path(report_id)
+    if not path.is_file():
+        return JSONResponse(
+            status_code=404,
+            content={
+                "detail": "Report not built yet",
+                "message": "Synthesized executive markdown not found; run build first.",
+            },
+        )
+    body = path.read_text(encoding="utf-8")
+    return _markdown_download_response(
+        body, f"executive-synthesized-{report_id}.md"
+    )
+
+
 @app.get("/reports/{report_id}/build-status")
 def report_build_status(report_id: int):
     """Poll after POST /build (returns 202); avoids proxy timeout during LLM steps."""
@@ -460,6 +481,9 @@ def report_build_status(report_id: int):
     }
     if status == "success":
         body["download_url"] = f"/reports/{report_id}/download/executive.docx"
+        body["synthesized_md_url"] = (
+            f"/reports/{report_id}/download/executive_synthesized.md"
+        )
     return JSONResponse(
         body,
         headers={"Cache-Control": "private, no-store, max-age=0"},
@@ -506,6 +530,9 @@ async def build_client_report(request: Request, report_id: int):
                 {
                     "status": "success",
                     "download_url": f"/reports/{report_id}/download/executive.docx",
+                    "synthesized_md_url": (
+                        f"/reports/{report_id}/download/executive_synthesized.md"
+                    ),
                 },
                 headers={"Cache-Control": "private, no-store, max-age=0"},
             )
