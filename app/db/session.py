@@ -1,19 +1,23 @@
 import json
 import os
-from pathlib import Path
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Base, DecisionRule
-
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-_DEFAULT_DB = _DATA_DIR / "site_auditor.db"
+from app.paths import site_auditor_data_dir, sqlite_database_path
 
 
 def get_engine():
-    url = os.getenv("DATABASE_URL", f"sqlite:///{_DEFAULT_DB}")
-    return create_engine(url, connect_args={"check_same_thread": False} if url.startswith("sqlite") else {})
+    url = (os.getenv("DATABASE_URL") or "").strip()
+    if not url:
+        db_path = sqlite_database_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        url = f"sqlite:///{db_path}"
+    return create_engine(
+        url,
+        connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
+    )
 
 
 engine = get_engine()
@@ -21,7 +25,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db() -> None:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    site_auditor_data_dir().mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     _seed_default_rules_if_empty()
 

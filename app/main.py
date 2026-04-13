@@ -109,6 +109,17 @@ def _filter_roadmap_equivalent_targets(roadmap_obj: dict | None) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if os.getenv("FLY_APP_NAME"):
+        import logging
+
+        log = logging.getLogger("uvicorn.error")
+        db_url = (os.getenv("DATABASE_URL") or "").strip().lower()
+        if not db_url or db_url.startswith("sqlite"):
+            log.warning(
+                "site_auditor: SQLite + local artifacts require a single Fly Machine "
+                "and a volume at SITE_AUDITOR_DATA (see fly.toml), or use DATABASE_URL "
+                "to managed Postgres plus shared object storage for generated files."
+            )
     yield
 
 

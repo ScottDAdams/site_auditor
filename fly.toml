@@ -2,18 +2,34 @@
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
+# IMPORTANT (SQLite + local files):
+# - Do not run more than one machine unless DATABASE_URL is Postgres (or another shared DB)
+#   and artifacts are stored elsewhere. Each machine has its own disk → duplicate/missing
+#   reports and 404s on executive.docx when the next request hits a different VM.
+# - First deploy with the volume below:
+#     fly volumes create auditor_data --region iad --size 1
+# - Pin one machine:  fly scale count 1
+# To skip the volume (ephemeral only), comment out [mounts] and the SITE_AUDITOR_DATA line.
 
 app = 'site-auditor'
 primary_region = 'iad'
 
 [build]
 
+[env]
+  SITE_AUDITOR_DATA = '/data/site_auditor'
+
+[mounts]
+  source = 'auditor_data'
+  destination = '/data/site_auditor'
+
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = 'stop'
+  # Single-tenant: keep one machine up; avoid splitting traffic across DBs/disks.
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
 [[vm]]

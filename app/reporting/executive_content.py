@@ -9,10 +9,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.paths import generated_reports_root
+
 
 def _generated_dir(report_id: int) -> Path:
-    root = Path(__file__).resolve().parent.parent.parent / "generated_reports"
-    return root / str(report_id)
+    return generated_reports_root() / str(report_id)
 
 
 def executive_docx_path(report_id: int) -> Path:

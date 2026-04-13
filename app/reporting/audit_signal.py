@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.paths import generated_reports_root
+
 
 def build_audit_signal(
     *,
@@ -153,8 +155,7 @@ def load_audit_signal(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def audit_signal_path(report_id: int) -> Path:
-    root = Path(__file__).resolve().parent.parent.parent / "generated_reports"
-    return root / str(report_id) / "audit_signal.json"
+    return generated_reports_root() / str(report_id) / "audit_signal.json"
 
 
 def save_audit_signal_file(report_id: int, audit_signal: dict[str, Any]) -> None:
