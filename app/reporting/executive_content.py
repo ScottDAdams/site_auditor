@@ -109,15 +109,15 @@ def validate_executive_content(md: str) -> dict[str, Any]:
     if _vague.search(text):
         errors.append("Contains vague filler phrasing")
 
-    _banned_words = re.compile(
-        r"\b(significant|critical|important|key|strategic|opportunity|misalignment)\b",
-        re.I,
-    )
-    if _banned_words.search(text):
-        errors.append("Contains banned hype words (e.g. significant, strategic, opportunity)")
+    # Do not reject normal business words (strategic, opportunity, key, etc.): models use them
+    # legitimately and the writer prompts already steer tone. Hard bans caused frequent 422s.
 
-    if _metric_mention_count(text) > 3:
-        errors.append("Too many metric call-outs (max 3 percentage-style mentions)")
+    # Soft guard: discourage raw metric spam (many "NN%" tokens), not woven proof across sections.
+    _MAX_PERCENT_STYLE_MENTIONS = 14
+    if _metric_mention_count(text) > _MAX_PERCENT_STYLE_MENTIONS:
+        errors.append(
+            f"Too many percentage-style metric call-outs (max {_MAX_PERCENT_STYLE_MENTIONS})"
+        )
 
     if _has_duplicate_sentences(text):
         errors.append("Contains repeated sentences")

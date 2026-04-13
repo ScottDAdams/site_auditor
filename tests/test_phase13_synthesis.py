@@ -107,16 +107,17 @@ class TestSynthesisValidation(unittest.TestCase):
         r = validate_executive_content(bad)
         self.assertFalse(r["ok"])
 
-    def test_validate_rejects_banned_hype(self):
-        bad = _SYNTH_OK.replace("clearer credit", "a significant lift in credit")
-        r = validate_executive_content(bad)
-        self.assertFalse(r["ok"])
-
-    def test_validate_rejects_too_many_percent_metrics(self):
-        bad = _SYNTH_OK.replace(
-            "Roughly four in ten",
-            "At 40.0% overlap, 41.0% overlap, 42.0% overlap, and 43.0% overlap",
+    def test_validate_still_allows_common_business_words(self):
+        ok = _SYNTH_OK.replace(
+            "clearer credit",
+            "clearer credit and a strategic shift in how pages earn demand",
         )
+        r = validate_executive_content(ok)
+        self.assertTrue(r["ok"], msg=r.get("errors"))
+
+    def test_validate_rejects_excessive_percent_metrics(self):
+        spam = " ".join(f"{i}.0%" for i in range(20))
+        bad = _SYNTH_OK.replace("The site keeps", spam + " The site keeps")
         r = validate_executive_content(bad)
         self.assertFalse(r["ok"])
 

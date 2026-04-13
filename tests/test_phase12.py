@@ -22,7 +22,7 @@ def _docx_available() -> bool:
         return False
 
 
-# Phase 15 validation: word caps, no hype words, few metric call-outs, 15+ words/section
+# Phase 15 validation: word caps, vague filler ban, metric spam cap, 15+ words/section
 _SYNTH_OK = """## Executive Summary
 
 The site keeps several live URLs answering the same buyer question, so teams split ownership and measurement before any campaign change can read clearly.
