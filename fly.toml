@@ -32,8 +32,9 @@ primary_region = 'iad'
   min_machines_running = 1
   processes = ['app']
 
+# Deploy "insufficient CPUs" = no capacity in the region right now (not your code).
+# Retry later; `fly machines list` + destroy duplicates; upgrade flyctl (fixes panic on error).
 [[vm]]
-  memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
   memory_mb = 1024
