@@ -2,7 +2,6 @@
 
 import json
 import os
-import time
 import unittest
 from unittest.mock import patch
 
@@ -12,19 +11,6 @@ from app.db.models import AppSetting, AuditReport
 from app.db.session import SessionLocal
 from app.main import app
 from app.reporting.executive_content import executive_docx_path, validate_executive_content
-
-
-def _wait_report_build(client: TestClient, report_id: int, timeout: float = 20.0) -> tuple[bool, dict]:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        r = client.get(f"/reports/{report_id}/build-status")
-        data = r.json()
-        if data.get("status") == "success":
-            return True, data
-        if data.get("status") == "error":
-            return False, data
-        time.sleep(0.05)
-    return False, {"status": "timeout", "errors": ["poll timeout"]}
 
 
 def _delete_build_job_row(report_id: int) -> None:
@@ -135,11 +121,10 @@ class TestReportBuilderEndpoint(unittest.TestCase):
             body = r.json()
             self.assertIn("not built", body.get("message", "").lower())
 
-            built = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(built.status_code, 202, msg=built.content)
-            self.assertEqual(built.json().get("status"), "queued")
-            ok, data = _wait_report_build(self.client, rid)
-            self.assertTrue(ok, msg=data)
+            built = self.client.post(f"/reports/{rid}/build?sync=1")
+            self.assertEqual(built.status_code, 200, msg=built.content)
+            data = built.json()
+            self.assertEqual(data.get("status"), "success")
             self.assertIn("download_url", data)
 
             p = executive_docx_path(rid)

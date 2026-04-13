@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import threading
@@ -15,6 +16,7 @@ from fastapi.responses import (
     JSONResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -465,8 +467,15 @@ def report_build_status(report_id: int):
 
 
 @app.post("/reports/{report_id}/build")
-def build_client_report(report_id: int):
-    """Queue Phase 15 build in a background thread; use GET .../build-status to poll."""
+async def build_client_report(request: Request, report_id: int):
+    """
+    Run Word report build. Default: SSE stream with keepalives so the same instance
+    stays busy (avoids Railway/multi-LB killing the worker that holds the thread).
+
+    Use ?sync=1 for tests or single-node JSON response (blocking, no stream).
+    """
+    sync = request.query_params.get("sync") == "1"
+
     with SessionLocal() as db:
         row = db.get(AuditReport, report_id)
     if not row:
@@ -488,19 +497,61 @@ def build_client_report(report_id: int):
         )
 
     set_report_build_state(report_id, "running", [])
-    threading.Thread(
-        target=run_report_build,
-        args=(report_id,),
-        daemon=True,
-    ).start()
 
-    return JSONResponse(
-        status_code=202,
-        content={
-            "status": "queued",
-            "poll_url": f"/reports/{report_id}/build-status",
+    if sync:
+        await asyncio.to_thread(run_report_build, report_id)
+        st = get_report_build_state(report_id)
+        if st.get("status") == "success":
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "download_url": f"/reports/{report_id}/download/executive.docx",
+                },
+                headers={"Cache-Control": "private, no-store, max-age=0"},
+            )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "error",
+                "errors": st.get("errors") or ["Build failed."],
+            },
+            headers={"Cache-Control": "private, no-store, max-age=0"},
+        )
+
+    done = threading.Event()
+
+    def _worker() -> None:
+        try:
+            run_report_build(report_id)
+        finally:
+            done.set()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    async def event_gen():
+        try:
+            while True:
+                signaled = await asyncio.to_thread(done.wait, 10.0)
+                if signaled:
+                    break
+                yield b": \n\n"
+            st = await asyncio.to_thread(get_report_build_state, report_id)
+            payload = json.dumps(st, default=str)
+            yield f"data: {payload}\n\n".encode("utf-8")
+        except Exception as exc:
+            err = json.dumps(
+                {"status": "error", "errors": [str(exc)]}, default=str
+            )
+            yield f"data: {err}\n\n".encode("utf-8")
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
-        headers={"Cache-Control": "private, no-store, max-age=0"},
     )
 
 

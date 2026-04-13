@@ -49,6 +49,32 @@
 (function () {
   var pollMs = 1200;
   var maxPolls = 200;
+
+  function applyBuildResult(body, id, st, btn) {
+    var s = body.status || "idle";
+    if (s === "success") {
+      if (st) { st.textContent = "Ready."; }
+      var row = document.getElementById("row-" + id);
+      var href = body.download_url || ("/reports/" + id + "/download/executive.docx");
+      if (row && href && !row.querySelector('a[href="' + href + '"]')) {
+        var a = document.createElement("a");
+        a.href = href;
+        a.className = "btn-download-md";
+        a.textContent = "Download .docx";
+        btn.parentNode.insertBefore(a, btn.nextSibling);
+      }
+      btn.disabled = false;
+      return;
+    }
+    if (s === "error") {
+      var err = (body.errors && body.errors.length) ? body.errors.join(" ") : "Build failed";
+      if (st) { st.textContent = "Error: " + err; }
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = false;
+  }
+
   function pollBuild(id, st, btn) {
     var n = 0;
     function tick() {
@@ -67,27 +93,7 @@
             setTimeout(tick, pollMs);
             return;
           }
-          if (s === "success") {
-            if (st) { st.textContent = "Ready."; }
-            var row = document.getElementById("row-" + id);
-            var href = body.download_url || ("/reports/" + id + "/download/executive.docx");
-            if (row && href && !row.querySelector('a[href="' + href + '"]')) {
-              var a = document.createElement("a");
-              a.href = href;
-              a.className = "btn-download-md";
-              a.textContent = "Download .docx";
-              btn.parentNode.insertBefore(a, btn.nextSibling);
-            }
-            btn.disabled = false;
-            return;
-          }
-          if (s === "error") {
-            var err = (body.errors && body.errors.length) ? body.errors.join(" ") : "Build failed";
-            if (st) { st.textContent = "Error: " + err; }
-            btn.disabled = false;
-            return;
-          }
-          btn.disabled = false;
+          applyBuildResult(body, id, st, btn);
         })
         .catch(function () {
           if (st) { st.textContent = "Status check failed; refresh the page."; }
@@ -97,47 +103,92 @@
     tick();
   }
 
+  function readBuildStream(response, id, st, btn) {
+    if (!response.body || !response.body.getReader) {
+      if (st) { st.textContent = "Streaming not supported; use a current browser."; }
+      btn.disabled = false;
+      return Promise.resolve();
+    }
+    if (st) { st.textContent = "Building… (keep this tab open until done)"; }
+    var reader = response.body.getReader();
+    var dec = new TextDecoder();
+    var buf = "";
+    function parseBlocks() {
+      var idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        var block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        var lines = block.split("\n");
+        for (var i = 0; i < lines.length; i++) {
+          if (lines[i].indexOf("data: ") === 0) {
+            var raw = lines[i].slice(6).trim();
+            if (!raw) continue;
+            try {
+              applyBuildResult(JSON.parse(raw), id, st, btn);
+            } catch (e) { /* ignore partial */ }
+          }
+        }
+      }
+    }
+    function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) {
+          parseBlocks();
+          return;
+        }
+        buf += dec.decode(chunk.value, { stream: true });
+        parseBlocks();
+        return pump();
+      });
+    }
+    return pump().catch(function () {
+      if (st) { st.textContent = "Connection lost during build; refresh and check Downloads or try again."; }
+      btn.disabled = false;
+    });
+  }
+
   document.querySelectorAll(".js-build-report").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var id = btn.getAttribute("data-report-id");
       var st = document.getElementById("status-" + id);
       if (st) { st.textContent = "Starting…"; }
       btn.disabled = true;
-      fetch("/reports/" + id + "/build", { method: "POST", credentials: "same-origin" })
-        .then(function (r) {
-          return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
-        })
-        .then(function (res) {
-          if (res.status === 404) {
-            var err404 = (res.body && res.body.errors) ? res.body.errors.join(" ") : "Not found";
-            if (st) { st.textContent = "Error: " + err404; }
-            btn.disabled = false;
-            return;
+      fetch("/reports/" + id + "/build", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "text/event-stream" },
+      })
+        .then(function (response) {
+          var ct = (response.headers.get("content-type") || "").toLowerCase();
+          if (response.status === 404) {
+            return response.json().then(function (j) {
+              var err404 = (j && j.errors) ? j.errors.join(" ") : "Not found";
+              if (st) { st.textContent = "Error: " + err404; }
+              btn.disabled = false;
+            });
           }
-          if (res.status === 202 || (res.body && (res.body.status === "queued" || res.body.status === "running"))) {
-            if (st) { st.textContent = "Building… (this can take a few minutes)"; }
-            pollBuild(id, st, btn);
-            return;
+          if (response.status === 202 && ct.indexOf("json") >= 0) {
+            return response.json().then(function (j) {
+              if (j.status === "running" || j.status === "queued") {
+                if (st) { st.textContent = "Build in progress elsewhere; watching status…"; }
+                pollBuild(id, st, btn);
+                return;
+              }
+              btn.disabled = false;
+            });
           }
-          if (!res.ok) {
-            var err = (res.body && res.body.errors) ? res.body.errors.join(" ") : "Build failed";
+          if (response.ok && ct.indexOf("text/event-stream") >= 0) {
+            return readBuildStream(response, id, st, btn);
+          }
+          return response.json().then(function (j) {
+            if (response.ok && j.status === "success") {
+              applyBuildResult(j, id, st, btn);
+              return;
+            }
+            var err = (j && j.errors) ? j.errors.join(" ") : "Build failed";
             if (st) { st.textContent = "Error: " + err; }
             btn.disabled = false;
-            return;
-          }
-          if (res.body && res.body.status === "success" && res.body.download_url) {
-            if (st) { st.textContent = "Ready."; }
-            var row = document.getElementById("row-" + id);
-            var href = res.body.download_url;
-            if (row && !row.querySelector('a[href="' + href + '"]')) {
-              var a = document.createElement("a");
-              a.href = href;
-              a.className = "btn-download-md";
-              a.textContent = "Download .docx";
-              btn.parentNode.insertBefore(a, btn.nextSibling);
-            }
-          }
-          btn.disabled = false;
+          });
         })
         .catch(function () {
           if (st) { st.textContent = "Request failed."; }

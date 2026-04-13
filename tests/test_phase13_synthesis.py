@@ -2,7 +2,6 @@
 
 import json
 import os
-import time
 import unittest
 from unittest.mock import patch
 
@@ -18,19 +17,6 @@ from app.reporting.executive_content import (
     validate_executive_content,
 )
 from app.reporting.report_builder import build_executive_docx
-
-
-def _wait_report_build(client: TestClient, report_id: int, timeout: float = 20.0) -> tuple[bool, dict]:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        r = client.get(f"/reports/{report_id}/build-status")
-        data = r.json()
-        if data.get("status") == "success":
-            return True, data
-        if data.get("status") == "error":
-            return False, data
-        time.sleep(0.05)
-    return False, {"status": "timeout", "errors": ["poll timeout"]}
 
 
 def _delete_build_job_row(report_id: int) -> None:
@@ -177,10 +163,9 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
             db.commit()
             rid = ar.id
         try:
-            r = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(r.status_code, 202, msg=r.content)
-            ok, st = _wait_report_build(self.client, rid)
-            self.assertTrue(ok, msg=st)
+            r = self.client.post(f"/reports/{rid}/build?sync=1")
+            self.assertEqual(r.status_code, 200, msg=r.content)
+            self.assertEqual(r.json().get("status"), "success")
             self.assertTrue(strategic_pov_path(rid).is_file())
             syn = executive_synthesized_md_path(rid)
             self.assertTrue(syn.is_file())
@@ -231,10 +216,9 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
             db.commit()
             rid = ar.id
         try:
-            r = self.client.post(f"/reports/{rid}/build")
-            self.assertEqual(r.status_code, 202)
-            ok, data = _wait_report_build(self.client, rid)
-            self.assertFalse(ok)
+            r = self.client.post(f"/reports/{rid}/build?sync=1")
+            self.assertEqual(r.status_code, 422)
+            data = r.json()
             self.assertEqual(data.get("status"), "error")
             self.assertTrue(data.get("errors"))
             self.assertFalse(executive_docx_path(rid).is_file())
