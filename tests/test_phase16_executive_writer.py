@@ -1,8 +1,9 @@
-"""Phase 16: light validation and grounding rules."""
+"""Phase 16 / 16.2: consulting validation rules."""
 
 import unittest
 
 from app.reporting.executive_content import MIN_SYNTHESIS_CHARS, validate_light
+from tests.fixtures_executive_synth import SYNTH_OK
 
 
 _BASE_AUDIT = {
@@ -12,20 +13,25 @@ _BASE_AUDIT = {
     "priority_actions": [],
 }
 
-_DOC = """Roughly 20.0% overlap and 0.8800 similarity drive the diagnosis. Twin URLs split credit; sample pairs repeat blocks. Canonicalize the top cluster first. Week 1–4 rollout. Noise persists without action. Clearer paths follow consolidation. """ * 8
-
 
 class TestValidateLight(unittest.TestCase):
     def test_min_length_constant_sane(self):
         self.assertGreaterEqual(MIN_SYNTHESIS_CHARS, 200)
 
-    def test_grounding_allows_percent_from_decimal_rate(self):
-        r = validate_light(_DOC, _BASE_AUDIT)
+    def test_fixture_passes(self):
+        r = validate_light(SYNTH_OK, _BASE_AUDIT)
         self.assertTrue(r["ok"], msg=r.get("errors"))
 
+    def test_banned_phrase_fails(self):
+        bad = SYNTH_OK + "\n\nThis is a significant problem."
+        r = validate_light(bad, _BASE_AUDIT)
+        self.assertFalse(r["ok"])
+        self.assertTrue(any("Banned" in e for e in r["errors"]))
+
     def test_too_many_ungrounded_numbers_fails(self):
-        bad = _DOC.replace("20.0%", "99.9%").replace("0.8800", "0.1234")
-        bad = bad.replace("Week 1–4", "Week 1–4 with 77.7% drag")
+        bad = SYNTH_OK.replace("20.0%", "99.9%").replace("0.8800", "0.1234")
+        bad = bad.replace("0.8800", "0.1111")  # already replaced above if duplicate
+        bad += " Extra noise: 55.5% and 66.6% drag on tests."
         r = validate_light(bad, _BASE_AUDIT)
         self.assertFalse(r["ok"])
 

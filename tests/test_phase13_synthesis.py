@@ -17,6 +17,7 @@ from app.reporting.executive_content import (
     validate_light,
 )
 from app.reporting.report_builder import build_executive_docx
+from tests.fixtures_executive_synth import SYNTH_OK
 
 
 def _delete_build_job_row(report_id: int) -> None:
@@ -43,30 +44,18 @@ _AUDIT = {
     "priority_actions": ["act"],
 }
 
-_SYNTH_OK = """## Opening
-
-Roughly 20.0% of crawled routes sit in overlap while paired pages show 0.8800 text similarity, so one narrative is being told through multiple doors. Duplicate routes answer the same buyer job without a single owner URL, which splits conversion and test readouts when demand lands on competing surfaces.
-
-Cluster proofs in the verification pack show the same section patterns across paired URLs in the sample. The priority is to pick one canonical URL per top cluster and merge or differentiate the twin this month.
-
-## Next thirty days
-
-Week 1 map overlaps. Week 2 execute merges. Week 3 fix internal links. Week 4 read conversion. Spend otherwise keeps feeding both routes while lift stays unreadable; one primary path per decision restores clearer credit and calmer optimization.
-"""
-
-
 class TestSynthesisValidation(unittest.TestCase):
-    def test_validate_allows_partial_h2_only(self):
+    def test_validate_rejects_generic_h2_only(self):
         partial = "## Executive Summary\n\n" + ("Body paragraph. " * 80)
         self.assertGreaterEqual(len(partial.strip()), MIN_SYNTHESIS_CHARS)
         r = validate_light(partial, _AUDIT)
-        self.assertTrue(r["ok"], msg=r.get("errors"))
+        self.assertFalse(r["ok"])
 
     def test_validate_ok_full_doc(self):
-        r = validate_light(_SYNTH_OK, _AUDIT)
+        r = validate_light(SYNTH_OK, _AUDIT)
         self.assertTrue(r["ok"], msg=r.get("errors"))
 
-    def test_validate_allows_prose_without_metrics(self):
+    def test_validate_rejects_prose_without_consulting_signals(self):
         prose = (
             "Structural overlap fragments how the business reads performance. "
             "Multiple routes answer equivalent buyer jobs so credit splinters and "
@@ -75,7 +64,7 @@ class TestSynthesisValidation(unittest.TestCase):
             "Canonicalization per intent cluster is the lever. "
         ) * 12
         r = validate_light(prose, _AUDIT)
-        self.assertTrue(r["ok"], msg=r.get("errors"))
+        self.assertFalse(r["ok"])
 
 
 @unittest.skipUnless(_docx_available(), "python-docx not installed")
@@ -84,7 +73,7 @@ class TestBuildUsesSynthesisOnly(unittest.TestCase):
         self.client = TestClient(app)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @patch("app.report_build_runner.write_executive_report", return_value=_SYNTH_OK)
+    @patch("app.report_build_runner.write_executive_report", return_value=SYNTH_OK)
     def test_build_writes_artifacts_and_docx(self, _mock_write):
         snap = json.dumps(
             {
@@ -185,7 +174,7 @@ class TestDocxRendering(unittest.TestCase):
             tdp = Path(td)
             md_path = tdp / "executive_synthesized.md"
             out_path = tdp / "executive.docx"
-            md_path.write_text(_SYNTH_OK, encoding="utf-8")
+            md_path.write_text(SYNTH_OK, encoding="utf-8")
             build_executive_docx(str(md_path), str(out_path))
             self.assertTrue(out_path.exists())
             self.assertGreater(out_path.stat().st_size, 2048)

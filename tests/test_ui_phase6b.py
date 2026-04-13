@@ -50,7 +50,7 @@ class TestUIPhase6b(unittest.TestCase):
         r = self.client.get("/reports/builder")
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"Report Builder", r.content)
-        self.assertIn(b"Build Report", r.content)
+        self.assertIn(b"js-build-report", r.content)
 
     def test_report_detail_executive_and_technical_section(self):
         snap = json.dumps(
